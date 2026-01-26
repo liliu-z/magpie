@@ -74,6 +74,53 @@ export class DebateOrchestrator {
     }
   }
 
+  async runStreaming(prNumber: string, initialPrompt: string): Promise<DebateResult> {
+    this.conversationHistory = []
+
+    for (let round = 1; round <= this.options.maxRounds; round++) {
+      for (const reviewer of this.reviewers) {
+        if (this.options.interactive && this.options.onInteractive) {
+          const userInput = await this.options.onInteractive()
+          if (userInput === 'q') break
+          if (userInput) {
+            this.conversationHistory.push({
+              reviewerId: 'user',
+              content: userInput,
+              timestamp: new Date()
+            })
+          }
+        }
+
+        const messages = this.buildMessages(initialPrompt, reviewer.id)
+        let fullResponse = ''
+
+        // Stream the response
+        for await (const chunk of reviewer.provider.chatStream(messages, reviewer.systemPrompt)) {
+          fullResponse += chunk
+          this.options.onMessage?.(reviewer.id, chunk)
+        }
+
+        this.conversationHistory.push({
+          reviewerId: reviewer.id,
+          content: fullResponse,
+          timestamp: new Date()
+        })
+      }
+
+      this.options.onRoundComplete?.(round)
+    }
+
+    const summaries = await this.collectSummaries()
+    const finalConclusion = await this.getFinalConclusion(summaries)
+
+    return {
+      prNumber,
+      messages: this.conversationHistory,
+      summaries,
+      finalConclusion
+    }
+  }
+
   private buildMessages(initialPrompt: string, currentReviewerId: string): Message[] {
     const messages: Message[] = [
       { role: 'user', content: initialPrompt }

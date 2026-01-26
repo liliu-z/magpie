@@ -49,12 +49,17 @@ export const reviewCommand = new Command('review')
         })
       }
 
+      let currentReviewer = ''
+
       const orchestrator = new DebateOrchestrator(reviewers, summarizer, {
         maxRounds: parseInt(options.rounds, 10),
         interactive: options.interactive,
-        onMessage: (reviewerId, content) => {
-          console.log(chalk.cyan(`\n[${reviewerId}]:`))
-          console.log(content)
+        onMessage: (reviewerId, chunk) => {
+          if (reviewerId !== currentReviewer) {
+            currentReviewer = reviewerId
+            console.log(chalk.cyan(`\n[${reviewerId}]:`))
+          }
+          process.stdout.write(chunk)
         },
         onRoundComplete: (round) => {
           console.log(chalk.dim(`\n--- Round ${round} complete ---\n`))
@@ -73,7 +78,7 @@ export const reviewCommand = new Command('review')
       spinner.start('Running debate...')
       spinner.stop()
 
-      const result = await orchestrator.run(pr, initialPrompt)
+      const result = await orchestrator.runStreaming(pr, initialPrompt)
 
       console.log(chalk.green('\n=== Final Conclusion ===\n'))
       console.log(result.finalConclusion)
