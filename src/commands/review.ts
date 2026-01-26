@@ -232,20 +232,23 @@ export const reviewCommand = new Command('review')
       let currentReviewer = ''
       let currentRound = 1
 
-      let waitingSpinner: ReturnType<typeof ora> | null = null
-      let jokeInterval: ReturnType<typeof setInterval> | null = null
+      // Use object ref to avoid TypeScript control flow issues with closures
+      const spinnerRef: { spinner: ReturnType<typeof ora> | null; interval: ReturnType<typeof setInterval> | null } = {
+        spinner: null,
+        interval: null
+      }
 
       const orchestrator = new DebateOrchestrator(reviewers, summarizer, analyzer, {
         maxRounds,
         interactive: options.interactive,
         checkConvergence,
         onWaiting: (reviewerId) => {
-          if (waitingSpinner) {
-            waitingSpinner.stop()
+          if (spinnerRef.spinner) {
+            spinnerRef.spinner.stop()
           }
-          if (jokeInterval) {
-            clearInterval(jokeInterval)
-            jokeInterval = null
+          if (spinnerRef.interval) {
+            clearInterval(spinnerRef.interval)
+            spinnerRef.interval = null
           }
           const baseLabel = reviewerId === 'analyzer' ? 'Analyzing changes' :
                        reviewerId === 'summarizer' ? 'Generating final summary' :
@@ -255,24 +258,24 @@ export const reviewCommand = new Command('review')
           // Show spinner with a joke
           const updateSpinner = () => {
             const joke = getRandomJoke()
-            if (waitingSpinner) {
-              waitingSpinner.text = `${baseLabel}... ${chalk.dim(`| ${joke}`)}`
+            if (spinnerRef.spinner) {
+              spinnerRef.spinner.text = `${baseLabel}... ${chalk.dim(`| ${joke}`)}`
             }
           }
 
-          waitingSpinner = ora(`${baseLabel}...`).start()
+          spinnerRef.spinner = ora(`${baseLabel}...`).start()
           updateSpinner()
           // Update joke every 8 seconds
-          jokeInterval = setInterval(updateSpinner, 8000)
+          spinnerRef.interval = setInterval(updateSpinner, 8000)
         },
         onMessage: (reviewerId, chunk) => {
-          if (jokeInterval) {
-            clearInterval(jokeInterval)
-            jokeInterval = null
+          if (spinnerRef.interval) {
+            clearInterval(spinnerRef.interval)
+            spinnerRef.interval = null
           }
-          if (waitingSpinner) {
-            waitingSpinner.stop()
-            waitingSpinner = null
+          if (spinnerRef.spinner) {
+            spinnerRef.spinner.stop()
+            spinnerRef.spinner = null
           }
           if (reviewerId !== currentReviewer) {
             currentReviewer = reviewerId
@@ -307,6 +310,16 @@ export const reviewCommand = new Command('review')
       })
 
       const result = await orchestrator.runStreaming(target.label, target.prompt)
+
+      // Stop any lingering spinner/interval (summarizer doesn't stream)
+      if (spinnerRef.interval) {
+        clearInterval(spinnerRef.interval)
+        spinnerRef.interval = null
+      }
+      if (spinnerRef.spinner) {
+        spinnerRef.spinner.stop()
+        spinnerRef.spinner = null
+      }
 
       // Final conclusion with nice formatting
       console.log(chalk.green.bold(`\n${'═'.repeat(50)}`))
