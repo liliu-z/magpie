@@ -80,6 +80,7 @@ export const reviewCommand = new Command('review')
   .option('-l, --local', 'Review local uncommitted changes (staged + unstaged)')
   .option('-b, --branch [base]', 'Review current branch vs base (default: main)')
   .option('--files <files...>', 'Review specific files')
+  .option('--git-remote <name>', 'Git remote to use for PR URL detection (default: origin)')
   .action(async (pr: string | undefined, options) => {
     const spinner = ora('Loading configuration...').start()
 
@@ -164,8 +165,9 @@ export const reviewCommand = new Command('review')
         } else {
           // Just PR number, try to detect repo from git
           prNumber = pr
+          const gitRemote = options.gitRemote || 'origin'
           try {
-            const remoteUrl = execSync('git remote get-url origin', { encoding: 'utf-8' }).trim()
+            const remoteUrl = execSync(`git remote get-url ${gitRemote}`, { encoding: 'utf-8' }).trim()
             // Convert git@github.com:org/repo.git or https://github.com/org/repo.git to https://github.com/org/repo
             const repoMatch = remoteUrl.match(/github\.com[:/]([^/]+\/[^/.]+)/)
             if (repoMatch) {
