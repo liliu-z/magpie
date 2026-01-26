@@ -334,20 +334,20 @@ ${messagesText}`
 
       return [{
         role: 'user',
-        content: `You are [${currentReviewerId}]. Your opponent${otherReviewerIds.length > 1 ? 's' : ''} [${otherReviewerIds.join('], [')}] responded:\n\n${newContent}\n\nChallenge their points or defend your position.`
+        content: `You are [${currentReviewerId}]. [${otherReviewerIds.join('], [')}] responded:\n\n${newContent}\n\nRespond to their points - agree where valid, challenge where you disagree.`
       }]
     }
 
     // First call or non-session mode: full context
-    const debateContext = `You are [${currentReviewerId}] in a code review debate against [${otherReviewerIds.join('], [')}].
-This is an adversarial debate between AI models - NOT a collaborative review.
+    const debateContext = `You are [${currentReviewerId}] in a code review debate with [${otherReviewerIds.join('], [')}].
+Your shared goal: find real issues in the code and reach the best conclusion.
 
 IMPORTANT:
-- You are [${currentReviewerId}], your opponent${otherReviewerIds.length > 1 ? 's are' : ' is'} [${otherReviewerIds.join('], [')}]
-- Do NOT agree just to be polite - challenge weak arguments
-- Defend your positions when challenged
-- Point out flaws in opponent's reasoning
-- It's OK to disagree strongly`
+- You are [${currentReviewerId}], the other reviewer${otherReviewerIds.length > 1 ? 's are' : ' is'} [${otherReviewerIds.join('], [')}]
+- Challenge weak arguments - don't agree just to be polite
+- If [${otherReviewerIds.join('] or [')}] makes a good point, acknowledge it and build on it
+- If you disagree, explain why with evidence
+- Add insights they might have missed`
 
     let prompt = `Task: ${this.taskPrompt}
 
