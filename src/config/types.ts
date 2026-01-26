@@ -11,6 +11,7 @@ export interface ReviewerConfig {
 export interface DefaultsConfig {
   max_rounds: number
   output_format: 'markdown' | 'json'
+  check_convergence: boolean
 }
 
 export interface MagpieConfig {

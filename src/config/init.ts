@@ -18,6 +18,7 @@ providers:
 defaults:
   max_rounds: 3
   output_format: markdown
+  check_convergence: true  # Stop early when reviewers reach consensus
 
 # Reviewer configurations
 reviewers:

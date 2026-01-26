@@ -8,6 +8,7 @@ export interface AIProvider {
   name: string
   chat(messages: Message[], systemPrompt?: string): Promise<string>
   chatStream(messages: Message[], systemPrompt?: string): AsyncGenerator<string, void, unknown>
+  setCwd?(cwd: string): void
 }
 
 export interface ProviderOptions {

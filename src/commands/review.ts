@@ -15,6 +15,7 @@ export const reviewCommand = new Command('review')
   .option('-i, --interactive', 'Interactive mode (pause between turns)')
   .option('-o, --output <file>', 'Output to file instead of stdout')
   .option('-f, --format <format>', 'Output format (markdown|json)', 'markdown')
+  .option('--no-converge', 'Disable early stop when reviewers reach consensus')
   .action(async (pr: string, options) => {
     const spinner = ora('Loading configuration...').start()
 
@@ -58,10 +59,30 @@ export const reviewCommand = new Command('review')
 
       let currentReviewer = ''
 
+      let waitingSpinner: ReturnType<typeof ora> | null = null
+
+      // Convergence: default from config, CLI can override with --no-converge
+      const checkConvergence = options.converge !== false && (config.defaults.check_convergence !== false)
+
       const orchestrator = new DebateOrchestrator(reviewers, summarizer, analyzer, {
         maxRounds: parseInt(options.rounds, 10),
         interactive: options.interactive,
+        checkConvergence,
+        onWaiting: (reviewerId) => {
+          if (waitingSpinner) {
+            waitingSpinner.stop()
+          }
+          const label = reviewerId === 'analyzer' ? 'Analyzing PR' :
+                       reviewerId === 'summarizer' ? 'Generating summary' :
+                       reviewerId === 'convergence-check' ? 'Checking convergence' :
+                       `Waiting for ${reviewerId}`
+          waitingSpinner = ora(label).start()
+        },
         onMessage: (reviewerId, chunk) => {
+          if (waitingSpinner) {
+            waitingSpinner.stop()
+            waitingSpinner = null
+          }
           if (reviewerId !== currentReviewer) {
             currentReviewer = reviewerId
             if (reviewerId === 'analyzer') {
@@ -72,8 +93,12 @@ export const reviewCommand = new Command('review')
           }
           process.stdout.write(chunk)
         },
-        onRoundComplete: (round) => {
-          console.log(chalk.dim(`\n--- Round ${round} complete ---\n`))
+        onRoundComplete: (round, converged) => {
+          if (converged) {
+            console.log(chalk.green(`\n--- Round ${round} complete - CONVERGED! Early stop. ---\n`))
+          } else {
+            console.log(chalk.dim(`\n--- Round ${round} complete ---\n`))
+          }
         },
         onInteractive: options.interactive ? async () => {
           return new Promise((resolve) => {
@@ -84,7 +109,7 @@ export const reviewCommand = new Command('review')
         } : undefined
       })
 
-      const initialPrompt = `Please review PR #${pr}. Use 'gh pr view ${pr}' and 'gh pr diff ${pr}' to get the PR details, then analyze the changes.`
+      const initialPrompt = `Please review PR #${pr}. Get the PR details and diff using any method available to you, then analyze the changes.`
 
       spinner.start('Running debate...')
       spinner.stop()
@@ -95,6 +120,23 @@ export const reviewCommand = new Command('review')
       console.log(result.analysis)
       console.log(chalk.green('\n=== Final Conclusion ===\n'))
       console.log(result.finalConclusion)
+
+      // Display token usage
+      console.log(chalk.yellow('\n=== Token Usage (Estimated) ===\n'))
+      let totalInput = 0
+      let totalOutput = 0
+      let totalCost = 0
+      for (const usage of result.tokenUsage) {
+        totalInput += usage.inputTokens
+        totalOutput += usage.outputTokens
+        totalCost += usage.estimatedCost || 0
+        console.log(chalk.dim(`  ${usage.reviewerId}: ${usage.inputTokens.toLocaleString()} in / ${usage.outputTokens.toLocaleString()} out`))
+      }
+      console.log(chalk.yellow(`  Total: ${totalInput.toLocaleString()} in / ${totalOutput.toLocaleString()} out (~$${totalCost.toFixed(4)})`))
+
+      if (result.convergedAtRound) {
+        console.log(chalk.green(`\n✓ Converged at round ${result.convergedAtRound}`))
+      }
 
       if (options.output) {
         const { writeFileSync } = await import('fs')

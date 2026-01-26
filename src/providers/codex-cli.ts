@@ -3,9 +3,15 @@ import type { AIProvider, Message, ProviderOptions } from './types.js'
 
 export class CodexCliProvider implements AIProvider {
   name = 'codex-cli'
+  private cwd: string
 
   constructor(_options?: ProviderOptions) {
     // No API key needed for Codex CLI (uses subscription)
+    this.cwd = process.cwd()
+  }
+
+  setCwd(cwd: string) {
+    this.cwd = cwd
   }
 
   async chat(messages: Message[], systemPrompt?: string): Promise<string> {
@@ -31,7 +37,10 @@ export class CodexCliProvider implements AIProvider {
 
   private runCodex(prompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const child = spawn('codex', ['-p', prompt], {
+      // Use 'codex exec -' to read from stdin (avoids command line length limits)
+      // --sandbox danger-full-access allows network access for gh commands
+      const child = spawn('codex', ['exec', '-', '--sandbox', 'danger-full-access'], {
+        cwd: this.cwd,
         stdio: ['pipe', 'pipe', 'pipe']
       })
 
@@ -57,11 +66,18 @@ export class CodexCliProvider implements AIProvider {
       child.on('error', (err) => {
         reject(new Error(`Failed to run codex CLI: ${err.message}`))
       })
+
+      // Write prompt to stdin and close
+      child.stdin.write(prompt)
+      child.stdin.end()
     })
   }
 
   private async *runCodexStream(prompt: string): AsyncGenerator<string, void, unknown> {
-    const child = spawn('codex', ['-p', prompt], {
+    // Use 'codex exec -' to read from stdin (avoids command line length limits)
+    // --sandbox danger-full-access allows network access for gh commands
+    const child = spawn('codex', ['exec', '-', '--sandbox', 'danger-full-access'], {
+      cwd: this.cwd,
       stdio: ['pipe', 'pipe', 'pipe']
     })
 
@@ -101,6 +117,10 @@ export class CodexCliProvider implements AIProvider {
         resolveNext({ value: undefined as any, done: true })
       }
     })
+
+    // Write prompt to stdin and close
+    child.stdin.write(prompt)
+    child.stdin.end()
 
     while (!done || chunks.length > 0) {
       if (chunks.length > 0) {

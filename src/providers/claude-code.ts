@@ -3,9 +3,16 @@ import type { AIProvider, Message, ProviderOptions } from './types.js'
 
 export class ClaudeCodeProvider implements AIProvider {
   name = 'claude-code'
+  private cwd: string
 
   constructor(_options?: ProviderOptions) {
     // No API key needed for Claude Code CLI
+    // Use current working directory so claude can access the repo
+    this.cwd = process.cwd()
+  }
+
+  setCwd(cwd: string) {
+    this.cwd = cwd
   }
 
   async chat(messages: Message[], systemPrompt?: string): Promise<string> {
@@ -31,7 +38,9 @@ export class ClaudeCodeProvider implements AIProvider {
 
   private runClaude(prompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const child = spawn('claude', ['-p', prompt], {
+      // Use stdin to pass prompt (avoids command line length limits)
+      const child = spawn('claude', ['-p', '-'], {
+        cwd: this.cwd,
         stdio: ['pipe', 'pipe', 'pipe']
       })
 
@@ -57,11 +66,17 @@ export class ClaudeCodeProvider implements AIProvider {
       child.on('error', (err) => {
         reject(new Error(`Failed to run claude CLI: ${err.message}`))
       })
+
+      // Write prompt to stdin and close
+      child.stdin.write(prompt)
+      child.stdin.end()
     })
   }
 
   private async *runClaudeStream(prompt: string): AsyncGenerator<string, void, unknown> {
-    const child = spawn('claude', ['-p', prompt], {
+    // Use stdin to pass prompt (avoids command line length limits)
+    const child = spawn('claude', ['-p', '-'], {
+      cwd: this.cwd,
       stdio: ['pipe', 'pipe', 'pipe']
     })
 
@@ -101,6 +116,10 @@ export class ClaudeCodeProvider implements AIProvider {
         resolveNext({ chunk: null })
       }
     })
+
+    // Write prompt to stdin and close
+    child.stdin.write(prompt)
+    child.stdin.end()
 
     while (!done || chunks.length > 0) {
       if (chunks.length > 0) {

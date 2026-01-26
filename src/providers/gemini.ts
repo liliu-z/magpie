@@ -12,7 +12,10 @@ export class GeminiProvider implements AIProvider {
   }
 
   async chat(messages: Message[], systemPrompt?: string): Promise<string> {
-    const model = this.client.getGenerativeModel({ model: this.model })
+    const model = this.client.getGenerativeModel({
+      model: this.model,
+      systemInstruction: systemPrompt ? { role: 'user', parts: [{ text: systemPrompt }] } : undefined
+    })
 
     // Build conversation history
     const history = messages.slice(0, -1).map(m => ({
@@ -20,10 +23,7 @@ export class GeminiProvider implements AIProvider {
       parts: [{ text: m.content }]
     }))
 
-    const chat = model.startChat({
-      history,
-      systemInstruction: systemPrompt
-    })
+    const chat = model.startChat({ history })
 
     const lastMessage = messages[messages.length - 1]
     const result = await chat.sendMessage(lastMessage.content)
@@ -31,17 +31,17 @@ export class GeminiProvider implements AIProvider {
   }
 
   async *chatStream(messages: Message[], systemPrompt?: string): AsyncGenerator<string, void, unknown> {
-    const model = this.client.getGenerativeModel({ model: this.model })
+    const model = this.client.getGenerativeModel({
+      model: this.model,
+      systemInstruction: systemPrompt ? { role: 'user', parts: [{ text: systemPrompt }] } : undefined
+    })
 
     const history = messages.slice(0, -1).map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }]
     }))
 
-    const chat = model.startChat({
-      history,
-      systemInstruction: systemPrompt
-    })
+    const chat = model.startChat({ history })
 
     const lastMessage = messages[messages.length - 1]
     const result = await chat.sendMessageStream(lastMessage.content)

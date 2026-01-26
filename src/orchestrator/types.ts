@@ -18,18 +18,29 @@ export interface DebateSummary {
   summary: string
 }
 
+export interface TokenUsage {
+  reviewerId: string
+  inputTokens: number
+  outputTokens: number
+  estimatedCost?: number  // USD
+}
+
 export interface DebateResult {
   prNumber: string
   analysis: string
   messages: DebateMessage[]
   summaries: DebateSummary[]
   finalConclusion: string
+  tokenUsage: TokenUsage[]
+  convergedAtRound?: number  // If converged early
 }
 
 export interface OrchestratorOptions {
   maxRounds: number
   interactive: boolean
   onMessage?: (reviewerId: string, chunk: string) => void
-  onRoundComplete?: (round: number) => void
+  onRoundComplete?: (round: number, converged: boolean) => void
   onInteractive?: () => Promise<string | null>
+  onWaiting?: (reviewerId: string) => void
+  checkConvergence?: boolean  // Enable convergence detection
 }
