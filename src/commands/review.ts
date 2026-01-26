@@ -7,6 +7,16 @@ import { createProvider } from '../providers/factory.js'
 import { DebateOrchestrator } from '../orchestrator/orchestrator.js'
 import type { Reviewer } from '../orchestrator/types.js'
 import { createInterface } from 'readline'
+import { marked } from 'marked'
+import TerminalRenderer from 'marked-terminal'
+
+// Configure marked to render for terminal
+marked.setOptions({
+  renderer: new TerminalRenderer({
+    reflowText: true,
+    width: 80,
+  }) as any
+})
 
 // Cold jokes to display while waiting
 const COLD_JOKES = [
@@ -302,7 +312,8 @@ export const reviewCommand = new Command('review')
       console.log(chalk.green.bold(`\n${'═'.repeat(50)}`))
       console.log(chalk.green.bold(`  🎯 Final Conclusion`))
       console.log(chalk.green.bold(`${'═'.repeat(50)}\n`))
-      console.log(result.finalConclusion)
+      // Render markdown for terminal
+      console.log(marked(result.finalConclusion))
 
       // Display token usage
       console.log(chalk.dim(`\n${'─'.repeat(50)}`))
