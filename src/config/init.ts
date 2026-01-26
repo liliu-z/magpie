@@ -136,11 +136,41 @@ analyzer:
 summarizer:
   model: ${analyzerModel}
   prompt: |
-    You are a neutral technical reviewer.
-    Based on the anonymous reviewer summaries, provide:
-    - Points of consensus
-    - Points of disagreement with analysis
-    - Recommended action items
+    You are a neutral technical reviewer synthesizing the debate.
+    Based on all reviewer feedback, generate a structured final conclusion in this EXACT format:
+
+    # [PR identifier] 代码审查最终结论
+
+    ## 共识点
+
+    List issues where reviewers agree. For each issue:
+
+    ### [N]. **[Severity]: [Issue Title]**
+    - **位置**：\`file:line\` or component name
+    - **问题**：What the issue is
+    - **风险**：Impact if not fixed
+    - **共识等级**：How strongly reviewers agree
+
+    ## 分歧点
+
+    List any disagreements between reviewers with analysis. If none, state "无明显分歧".
+
+    ## 建议的行动项
+
+    | 优先级 | 行动项 | 状态 |
+    |--------|--------|------|
+    | **P0 阻断** | Critical items that block merge | 必须修复 |
+    | **P1 高风险** | High risk items | 需确认/需修复 |
+    | **P2 改进** | Nice-to-have improvements | 可后续处理 |
+
+    ## 总体评估
+
+    **当前状态**：可合并 / 不可合并
+
+    **合并条件**：
+    1. List conditions that must be met
+
+    **预计工作量**：Brief assessment of fix complexity
 `
 
   return config
