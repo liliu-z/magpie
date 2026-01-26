@@ -32,16 +32,23 @@ describe('DebateOrchestrator', () => {
       provider: createMockProvider('s', ['Final conclusion']),
       systemPrompt: 'You are a summarizer'
     }
+    const analyzer: Reviewer = {
+      id: 'analyzer',
+      provider: createMockProvider('analyzer', ['PR analysis result']),
+      systemPrompt: 'You are an analyzer'
+    }
 
     const orchestrator = new DebateOrchestrator(
       [reviewerA, reviewerB],
       summarizer,
+      analyzer,
       { maxRounds: 2, interactive: false }
     )
 
     const result = await orchestrator.run('123', 'Review this PR')
 
     expect(result.prNumber).toBe('123')
+    expect(result.analysis).toBe('PR analysis result')
     expect(result.messages.length).toBe(4) // 2 reviewers * 2 rounds
     expect(result.summaries.length).toBe(2)
     expect(result.finalConclusion).toBe('Final conclusion')
@@ -64,10 +71,16 @@ describe('DebateOrchestrator', () => {
       provider: { name: 's', chat: vi.fn().mockResolvedValue('summary'), chatStream: vi.fn() },
       systemPrompt: 'Summarize'
     }
+    const analyzer: Reviewer = {
+      id: 'analyzer',
+      provider: { name: 'analyzer', chat: vi.fn().mockResolvedValue('analysis'), chatStream: vi.fn() },
+      systemPrompt: 'Analyze'
+    }
 
     const orchestrator = new DebateOrchestrator(
       [reviewerA, reviewerB],
       summarizer,
+      analyzer,
       { maxRounds: 1, interactive: false }
     )
 

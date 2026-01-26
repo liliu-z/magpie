@@ -20,6 +20,7 @@ export interface DebateSummary {
 
 export interface DebateResult {
   prNumber: string
+  analysis: string
   messages: DebateMessage[]
   summaries: DebateSummary[]
   finalConclusion: string

@@ -36,6 +36,13 @@ export const reviewCommand = new Command('review')
         systemPrompt: config.summarizer.prompt
       }
 
+      // Create analyzer
+      const analyzer: Reviewer = {
+        id: 'analyzer',
+        provider: createProvider(config.analyzer.model, config),
+        systemPrompt: config.analyzer.prompt
+      }
+
       console.log(chalk.blue(`\nStarting review of PR #${pr}`))
       console.log(chalk.dim(`Reviewers: ${reviewers.map(r => r.id).join(', ')}`))
       console.log(chalk.dim(`Max rounds: ${options.rounds}\n`))
@@ -51,13 +58,17 @@ export const reviewCommand = new Command('review')
 
       let currentReviewer = ''
 
-      const orchestrator = new DebateOrchestrator(reviewers, summarizer, {
+      const orchestrator = new DebateOrchestrator(reviewers, summarizer, analyzer, {
         maxRounds: parseInt(options.rounds, 10),
         interactive: options.interactive,
         onMessage: (reviewerId, chunk) => {
           if (reviewerId !== currentReviewer) {
             currentReviewer = reviewerId
-            console.log(chalk.cyan(`\n[${reviewerId}]:`))
+            if (reviewerId === 'analyzer') {
+              console.log(chalk.magenta(`\n=== PR Analysis ===\n`))
+            } else {
+              console.log(chalk.cyan(`\n[${reviewerId}]:`))
+            }
           }
           process.stdout.write(chunk)
         },
@@ -80,6 +91,8 @@ export const reviewCommand = new Command('review')
 
       const result = await orchestrator.runStreaming(pr, initialPrompt)
 
+      console.log(chalk.magenta('\n=== PR Analysis ===\n'))
+      console.log(result.analysis)
       console.log(chalk.green('\n=== Final Conclusion ===\n'))
       console.log(result.finalConclusion)
 
@@ -105,6 +118,7 @@ export const reviewCommand = new Command('review')
 
 function formatMarkdown(result: any): string {
   let md = `# PR Review: #${result.prNumber}\n\n`
+  md += `## PR Analysis\n\n${result.analysis}\n\n`
   md += `## Debate\n\n`
 
   for (const msg of result.messages) {

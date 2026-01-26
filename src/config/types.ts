@@ -22,4 +22,5 @@ export interface MagpieConfig {
   defaults: DefaultsConfig
   reviewers: Record<string, ReviewerConfig>
   summarizer: ReviewerConfig
+  analyzer: ReviewerConfig
 }

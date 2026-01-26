@@ -48,6 +48,22 @@ reviewers:
       - Test coverage
       - Documentation
 
+# Analyzer configuration - runs before debate to provide context
+analyzer:
+  model: claude-sonnet-4-20250514
+  prompt: |
+    You are a senior engineer providing PR context analysis.
+    Before the review debate begins, analyze this PR and provide:
+
+    1. **What this PR does** - A clear summary of the changes
+    2. **Architecture/Design** - Key architectural decisions and patterns used
+    3. **Purpose** - What problem this solves or what feature it adds
+    4. **Trade-offs** - Any trade-offs made and why
+    5. **Things to note** - Important details reviewers should pay attention to
+
+    Use 'gh pr view' and 'gh pr diff' to get the PR details.
+    Be concise but thorough.
+
 # Summarizer configuration
 summarizer:
   model: claude-sonnet-4-20250514

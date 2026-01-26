@@ -11,21 +11,33 @@ import type {
 export class DebateOrchestrator {
   private reviewers: Reviewer[]
   private summarizer: Reviewer
+  private analyzer: Reviewer
   private options: OrchestratorOptions
   private conversationHistory: DebateMessage[] = []
 
   constructor(
     reviewers: Reviewer[],
     summarizer: Reviewer,
+    analyzer: Reviewer,
     options: OrchestratorOptions
   ) {
     this.reviewers = reviewers
     this.summarizer = summarizer
+    this.analyzer = analyzer
     this.options = options
+  }
+
+  private async preAnalyze(prNumber: string): Promise<string> {
+    const prompt = `Please analyze PR #${prNumber}. Use 'gh pr view ${prNumber}' and 'gh pr diff ${prNumber}' to get the PR details.`
+    const messages: Message[] = [{ role: 'user', content: prompt }]
+    return this.analyzer.provider.chat(messages, this.analyzer.systemPrompt)
   }
 
   async run(prNumber: string, initialPrompt: string): Promise<DebateResult> {
     this.conversationHistory = []
+
+    // Run pre-analysis first
+    const analysis = await this.preAnalyze(prNumber)
 
     // Run debate rounds
     for (let round = 1; round <= this.options.maxRounds; round++) {
@@ -68,6 +80,7 @@ export class DebateOrchestrator {
 
     return {
       prNumber,
+      analysis,
       messages: this.conversationHistory,
       summaries,
       finalConclusion
@@ -76,6 +89,17 @@ export class DebateOrchestrator {
 
   async runStreaming(prNumber: string, initialPrompt: string): Promise<DebateResult> {
     this.conversationHistory = []
+
+    // Run pre-analysis first (with streaming)
+    let analysis = ''
+    const analyzePrompt = `Please analyze PR #${prNumber}. Use 'gh pr view ${prNumber}' and 'gh pr diff ${prNumber}' to get the PR details.`
+    const analyzeMessages: Message[] = [{ role: 'user', content: analyzePrompt }]
+
+    // Stream the analysis
+    for await (const chunk of this.analyzer.provider.chatStream(analyzeMessages, this.analyzer.systemPrompt)) {
+      analysis += chunk
+      this.options.onMessage?.('analyzer', chunk)
+    }
 
     for (let round = 1; round <= this.options.maxRounds; round++) {
       for (const reviewer of this.reviewers) {
@@ -115,6 +139,7 @@ export class DebateOrchestrator {
 
     return {
       prNumber,
+      analysis,
       messages: this.conversationHistory,
       summaries,
       finalConclusion
