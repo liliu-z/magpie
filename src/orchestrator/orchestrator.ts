@@ -68,15 +68,28 @@ export class DebateOrchestrator {
     const lastRoundMessages = this.conversationHistory.slice(-this.reviewers.length)
     const messagesText = lastRoundMessages
       .map(m => `[${m.reviewerId}]: ${m.content}`)
-      .join('\n\n')
+      .join('\n\n---\n\n')
 
-    const prompt = `There are exactly ${this.reviewers.length} reviewers in this debate. Analyze their comments below and determine if they have reached consensus.
-Reply with ONLY "CONVERGED" if they mostly agree on key points, or "NOT_CONVERGED" if there are still significant disagreements.
+    const prompt = `You are a strict judge. Analyze whether these ${this.reviewers.length} reviewers have reached TRUE CONSENSUS.
 
-${messagesText}`
+CONSENSUS means:
+- All reviewers agree on the SAME final verdict (e.g., all say "approve" or all say "request changes")
+- No reviewer explicitly rejects or disagrees with another's core position
+- They may have minor differences but agree on what actions to take
+
+NOT CONSENSUS if ANY of these:
+- One reviewer says "I disagree with [X]" or "I reject [X]'s view"
+- Reviewers give different verdicts (one approves, another requests changes)
+- One reviewer explicitly challenges another's reasoning as flawed
+- They agree on problems but disagree on severity or required actions
+
+Reviews:
+${messagesText}
+
+Reply with ONLY one word: CONVERGED or NOT_CONVERGED`
 
     const messages: Message[] = [{ role: 'user', content: prompt }]
-    const response = await this.summarizer.provider.chat(messages, 'You are a neutral judge evaluating debate convergence. Reply only with CONVERGED or NOT_CONVERGED.')
+    const response = await this.summarizer.provider.chat(messages, 'You are a strict consensus judge. Be conservative - when in doubt, say NOT_CONVERGED. Reply with only one word.')
 
     return response.trim().toUpperCase().includes('CONVERGED')
   }
