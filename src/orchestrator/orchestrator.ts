@@ -16,6 +16,7 @@ export class DebateOrchestrator {
   private options: OrchestratorOptions
   private conversationHistory: DebateMessage[] = []
   private tokenUsage: Map<string, { input: number; output: number }> = new Map()
+  private analysis: string = ''  // Store analysis to avoid repeating diff
 
   constructor(
     reviewers: Reviewer[],
@@ -96,8 +97,8 @@ ${messagesText}`
     this.tokenUsage.clear()
     let convergedAtRound: number | undefined
 
-    // Run pre-analysis first
-    const analysis = await this.preAnalyze(label, diff)
+    // Run pre-analysis first and store it
+    this.analysis = await this.preAnalyze(label, diff)
 
     // Run debate rounds
     for (let round = 1; round <= this.options.maxRounds; round++) {
@@ -117,7 +118,7 @@ ${messagesText}`
           }
         }
 
-        const messages = this.buildMessages(initialPrompt, reviewer.id)
+        const messages = this.buildMessages(reviewer.id)
         const response = await reviewer.provider.chat(messages, reviewer.systemPrompt)
 
         const inputText = messages.map(m => m.content).join('\n') + (reviewer.systemPrompt || '')
@@ -156,7 +157,7 @@ ${messagesText}`
 
     return {
       prNumber: label,
-      analysis,
+      analysis: this.analysis,
       messages: this.conversationHistory,
       summaries,
       finalConclusion,
@@ -168,10 +169,10 @@ ${messagesText}`
   async runStreaming(label: string, initialPrompt: string, diff?: string): Promise<DebateResult> {
     this.conversationHistory = []
     this.tokenUsage.clear()
+    this.analysis = ''
     let convergedAtRound: number | undefined
 
     // Run pre-analysis first (with streaming)
-    let analysis = ''
     let analyzePrompt: string
     if (diff) {
       analyzePrompt = `Please analyze the following code changes:\n\n\`\`\`diff\n${diff}\n\`\`\`\n\nProvide a summary of what these changes do.`
@@ -183,10 +184,10 @@ ${messagesText}`
     // Stream the analysis
     this.options.onWaiting?.('analyzer')
     for await (const chunk of this.analyzer.provider.chatStream(analyzeMessages, this.analyzer.systemPrompt)) {
-      analysis += chunk
+      this.analysis += chunk
       this.options.onMessage?.('analyzer', chunk)
     }
-    this.trackTokens('analyzer', analyzePrompt + (this.analyzer.systemPrompt || ''), analysis)
+    this.trackTokens('analyzer', analyzePrompt + (this.analyzer.systemPrompt || ''), this.analysis)
 
     for (let round = 1; round <= this.options.maxRounds; round++) {
       for (const reviewer of this.reviewers) {
@@ -202,7 +203,7 @@ ${messagesText}`
           }
         }
 
-        const messages = this.buildMessages(initialPrompt, reviewer.id)
+        const messages = this.buildMessages(reviewer.id)
         let fullResponse = ''
 
         // Stream the response
@@ -245,7 +246,7 @@ ${messagesText}`
 
     return {
       prNumber: label,
-      analysis,
+      analysis: this.analysis,
       messages: this.conversationHistory,
       summaries,
       finalConclusion,
@@ -254,12 +255,13 @@ ${messagesText}`
     }
   }
 
-  private buildMessages(initialPrompt: string, currentReviewerId: string): Message[] {
+  private buildMessages(currentReviewerId: string): Message[] {
     const hasHistory = this.conversationHistory.length > 0
     const otherReviewerCount = this.reviewers.length - 1
 
-    // Add debate context if there's history
-    let prompt = initialPrompt
+    // First message: the analysis (not the raw diff)
+    let prompt = `Here is the analysis of the code changes:\n\n${this.analysis}\n\nPlease review these changes and provide your feedback.`
+
     if (hasHistory) {
       prompt += `
 
@@ -267,7 +269,7 @@ You are in a code review debate with ${otherReviewerCount} other AI reviewer${ot
 There are ${this.reviewers.length} AI reviewers total in this debate.
 
 IMPORTANT:
-- The messages marked [AI Reviewer] are from OTHER AI models reviewing the same PR
+- The messages marked [AI Reviewer] are from OTHER AI models reviewing the same code
 - Do NOT be sycophantic or automatically agree - they are AI peers, not users to please
 - Be intellectually honest: agree only if you genuinely agree, challenge if you see flaws
 - Point out if they missed something or got something wrong
@@ -296,7 +298,7 @@ IMPORTANT:
     const summaryPrompt = 'Please summarize your key points and conclusions. Do not reveal your identity or role.'
 
     for (const reviewer of this.reviewers) {
-      const messages = this.buildMessages(summaryPrompt, reviewer.id)
+      const messages = this.buildMessages(reviewer.id)
       messages.push({ role: 'user', content: summaryPrompt })
 
       const summary = await reviewer.provider.chat(messages, reviewer.systemPrompt)
