@@ -5,8 +5,8 @@ export class GeminiCliProvider implements AIProvider {
   name = 'gemini-cli'
   private cwd: string
   private timeout: number  // ms, 0 = no timeout
-  sessionId?: string
-  private sessionIndex: number = 0
+  sessionId?: string  // For interface compatibility
+  private hasSession: boolean = false
   private isFirstMessage: boolean = true
 
   constructor(_options?: ProviderOptions) {
@@ -20,17 +20,19 @@ export class GeminiCliProvider implements AIProvider {
   }
 
   startSession(): void {
-    this.sessionIndex = Date.now()  // Use timestamp as session identifier
+    this.hasSession = true
     this.isFirstMessage = true
+    this.sessionId = 'gemini-session'  // Mark as having session for orchestrator
   }
 
   endSession(): void {
-    this.sessionIndex = 0
+    this.hasSession = false
     this.isFirstMessage = true
+    this.sessionId = undefined
   }
 
   async chat(messages: Message[], systemPrompt?: string): Promise<string> {
-    const prompt = this.sessionId && !this.isFirstMessage
+    const prompt = this.hasSession && !this.isFirstMessage
       ? this.buildPromptLastOnly(messages)
       : this.buildPrompt(messages, systemPrompt)
     const result = await this.runGemini(prompt)
@@ -39,7 +41,7 @@ export class GeminiCliProvider implements AIProvider {
   }
 
   async *chatStream(messages: Message[], systemPrompt?: string): AsyncGenerator<string, void, unknown> {
-    const prompt = this.sessionId && !this.isFirstMessage
+    const prompt = this.hasSession && !this.isFirstMessage
       ? this.buildPromptLastOnly(messages)
       : this.buildPrompt(messages, systemPrompt)
     yield* this.runGeminiStream(prompt)
@@ -69,7 +71,7 @@ export class GeminiCliProvider implements AIProvider {
       const args = ['-y', '-o', 'text']
 
       // Resume session if not first message
-      if (this.sessionIndex && !this.isFirstMessage) {
+      if (this.hasSession && !this.isFirstMessage) {
         args.push('-r', 'latest')
       }
 
@@ -107,11 +109,11 @@ export class GeminiCliProvider implements AIProvider {
   }
 
   private async *runGeminiStream(prompt: string): AsyncGenerator<string, void, unknown> {
-    // Gemini CLI with stream-json output for streaming
+    // Gemini CLI with text output for streaming
     const args = ['-y', '-o', 'text']
 
     // Resume session if not first message
-    if (this.sessionIndex && !this.isFirstMessage) {
+    if (this.hasSession && !this.isFirstMessage) {
       args.push('-r', 'latest')
     }
 
