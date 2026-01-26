@@ -8,6 +8,50 @@ import { DebateOrchestrator } from '../orchestrator/orchestrator.js'
 import type { Reviewer } from '../orchestrator/types.js'
 import { createInterface } from 'readline'
 
+// Cold jokes to display while waiting
+const COLD_JOKES = [
+  'Why do programmers confuse Halloween and Christmas? Because Oct 31 = Dec 25',
+  'A SQL query walks into a bar, walks up to two tables and asks: "Can I join you?"',
+  'Why do programmers hate nature? It has too many bugs.',
+  'There are only 10 types of people: those who understand binary and those who don\'t',
+  'Why do Java developers wear glasses? Because they can\'t C#',
+  'A programmer\'s wife: "Buy a loaf of bread. If they have eggs, buy a dozen." He returns with 12 loaves.',
+  'Why did the developer go broke? Because he used up all his cache.',
+  '99 little bugs in the code, take one down, patch it around... 127 little bugs in the code.',
+  'There\'s no place like 127.0.0.1',
+  'Why did the functions stop calling each other? They had too many arguments.',
+  'I would tell you a UDP joke, but you might not get it.',
+  'A TCP packet walks into a bar and says "I\'d like a beer." Bartender: "You want a beer?" "Yes, a beer."',
+  'Why do backend devs wear glasses? Because they don\'t do C SS.',
+  'How many programmers does it take to change a light bulb? None, that\'s a hardware problem.',
+  'Programming is 10% writing code and 90% figuring out why it doesn\'t work.',
+  'The best thing about a boolean is that even if you\'re wrong, you\'re only off by a bit.',
+  'Why was the JavaScript developer sad? Because he didn\'t Node how to Express himself.',
+  'In order to understand recursion, you must first understand recursion.',
+  'I\'ve got a really good UDP joke to tell you but I don\'t know if you\'ll get it.',
+  'A programmer puts two glasses on his bedside table before sleeping. One full of water in case he gets thirsty, one empty in case he doesn\'t.',
+  'Why did the programmer quit his job? Because he didn\'t get arrays.',
+  '!false - It\'s funny because it\'s true.',
+  'There are two hard things in computer science: cache invalidation, naming things, and off-by-one errors.',
+  'What\'s the object-oriented way to become wealthy? Inheritance.',
+  'Why do C# and Java developers keep breaking their keyboards? Because they use a strongly typed language.',
+  'A QA engineer walks into a bar. Orders 1 beer. Orders 0 beers. Orders -1 beers. Orders 999999 beers. Orders a lizard.',
+  'Debugging: Being the detective in a crime movie where you are also the murderer.',
+  'It works on my machine! Then we\'ll ship your machine.',
+  'Software and cathedrals are much the same: first we build them, then we pray.',
+  'The code that is the hardest to debug is the code you were sure would work.',
+  'Copy-paste is not a design pattern.',
+  'Why do Python programmers have low self-esteem? They\'re constantly comparing themselves to others.',
+  'What\'s a pirate\'s favorite programming language? R... you\'d think it\'s R but it\'s actually the C.',
+  'How does a computer get drunk? It takes screenshots.',
+  'Real programmers count from 0.',
+  'Git commit -m "fixed it for real this time"',
+]
+
+function getRandomJoke(): string {
+  return COLD_JOKES[Math.floor(Math.random() * COLD_JOKES.length)]
+}
+
 interface ReviewTarget {
   type: 'pr' | 'local' | 'branch' | 'files'
   label: string
@@ -179,6 +223,7 @@ export const reviewCommand = new Command('review')
       let currentRound = 1
 
       let waitingSpinner: ReturnType<typeof ora> | null = null
+      let jokeInterval: ReturnType<typeof setInterval> | null = null
 
       const orchestrator = new DebateOrchestrator(reviewers, summarizer, analyzer, {
         maxRounds,
@@ -188,13 +233,33 @@ export const reviewCommand = new Command('review')
           if (waitingSpinner) {
             waitingSpinner.stop()
           }
-          const label = reviewerId === 'analyzer' ? 'Analyzing changes...' :
-                       reviewerId === 'summarizer' ? 'Generating final summary...' :
-                       reviewerId === 'convergence-check' ? 'Checking convergence...' :
-                       `${reviewerId} is thinking...`
-          waitingSpinner = ora(label).start()
+          if (jokeInterval) {
+            clearInterval(jokeInterval)
+            jokeInterval = null
+          }
+          const baseLabel = reviewerId === 'analyzer' ? 'Analyzing changes' :
+                       reviewerId === 'summarizer' ? 'Generating final summary' :
+                       reviewerId === 'convergence-check' ? 'Checking convergence' :
+                       `${reviewerId} is thinking`
+
+          // Show spinner with a joke
+          const updateSpinner = () => {
+            const joke = getRandomJoke()
+            if (waitingSpinner) {
+              waitingSpinner.text = `${baseLabel}... ${chalk.dim(`| ${joke}`)}`
+            }
+          }
+
+          waitingSpinner = ora(`${baseLabel}...`).start()
+          updateSpinner()
+          // Update joke every 8 seconds
+          jokeInterval = setInterval(updateSpinner, 8000)
         },
         onMessage: (reviewerId, chunk) => {
+          if (jokeInterval) {
+            clearInterval(jokeInterval)
+            jokeInterval = null
+          }
           if (waitingSpinner) {
             waitingSpinner.stop()
             waitingSpinner = null

@@ -10,7 +10,7 @@ export class ClaudeCodeProvider implements AIProvider {
     // No API key needed for Claude Code CLI
     // Use current working directory so claude can access the repo
     this.cwd = process.cwd()
-    this.timeout = 5 * 60 * 1000  // 5 minutes default
+    this.timeout = 15 * 60 * 1000  // 15 minutes default
   }
 
   setCwd(cwd: string) {

@@ -9,7 +9,7 @@ export class CodexCliProvider implements AIProvider {
   constructor(_options?: ProviderOptions) {
     // No API key needed for Codex CLI (uses subscription)
     this.cwd = process.cwd()
-    this.timeout = 5 * 60 * 1000  // 5 minutes default
+    this.timeout = 15 * 60 * 1000  // 15 minutes default
   }
 
   setCwd(cwd: string) {
