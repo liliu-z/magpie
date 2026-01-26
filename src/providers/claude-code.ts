@@ -1,10 +1,13 @@
 import { spawn } from 'child_process'
+import { randomUUID } from 'crypto'
 import type { AIProvider, Message, ProviderOptions } from './types.js'
 
 export class ClaudeCodeProvider implements AIProvider {
   name = 'claude-code'
   private cwd: string
   private timeout: number  // ms, 0 = no timeout
+  sessionId?: string
+  private isFirstMessage: boolean = true
 
   constructor(_options?: ProviderOptions) {
     // No API key needed for Claude Code CLI
@@ -17,14 +20,33 @@ export class ClaudeCodeProvider implements AIProvider {
     this.cwd = cwd
   }
 
+  startSession(): void {
+    this.sessionId = randomUUID()
+    this.isFirstMessage = true
+  }
+
+  endSession(): void {
+    this.sessionId = undefined
+    this.isFirstMessage = true
+  }
+
   async chat(messages: Message[], systemPrompt?: string): Promise<string> {
-    const prompt = this.buildPrompt(messages, systemPrompt)
-    return this.runClaude(prompt)
+    // In session mode, only send the last user message (history is in session)
+    const prompt = this.sessionId && !this.isFirstMessage
+      ? this.buildPromptLastOnly(messages)
+      : this.buildPrompt(messages, systemPrompt)
+    const result = await this.runClaude(prompt, systemPrompt)
+    this.isFirstMessage = false
+    return result
   }
 
   async *chatStream(messages: Message[], systemPrompt?: string): AsyncGenerator<string, void, unknown> {
-    const prompt = this.buildPrompt(messages, systemPrompt)
-    yield* this.runClaudeStream(prompt)
+    // In session mode, only send the last user message (history is in session)
+    const prompt = this.sessionId && !this.isFirstMessage
+      ? this.buildPromptLastOnly(messages)
+      : this.buildPrompt(messages, systemPrompt)
+    yield* this.runClaudeStream(prompt, systemPrompt)
+    this.isFirstMessage = false
   }
 
   private buildPrompt(messages: Message[], systemPrompt?: string): string {
@@ -38,10 +60,28 @@ export class ClaudeCodeProvider implements AIProvider {
     return prompt
   }
 
-  private runClaude(prompt: string): Promise<string> {
+  // Only get the last user message for session continuation
+  private buildPromptLastOnly(messages: Message[]): string {
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')
+    return lastUserMsg?.content || ''
+  }
+
+  private runClaude(prompt: string, systemPrompt?: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      // Use stdin to pass prompt (avoids command line length limits)
-      const child = spawn('claude', ['-p', '-'], {
+      // Build args based on session state
+      const args = ['-p', '-']
+      if (this.sessionId) {
+        if (this.isFirstMessage) {
+          args.push('--session-id', this.sessionId)
+          if (systemPrompt) {
+            args.push('--system-prompt', systemPrompt)
+          }
+        } else {
+          args.push('--resume', this.sessionId)
+        }
+      }
+
+      const child = spawn('claude', args, {
         cwd: this.cwd,
         stdio: ['pipe', 'pipe', 'pipe']
       })
@@ -75,9 +115,21 @@ export class ClaudeCodeProvider implements AIProvider {
     })
   }
 
-  private async *runClaudeStream(prompt: string): AsyncGenerator<string, void, unknown> {
-    // Use stdin to pass prompt (avoids command line length limits)
-    const child = spawn('claude', ['-p', '-'], {
+  private async *runClaudeStream(prompt: string, systemPrompt?: string): AsyncGenerator<string, void, unknown> {
+    // Build args based on session state
+    const args = ['-p', '-']
+    if (this.sessionId) {
+      if (this.isFirstMessage) {
+        args.push('--session-id', this.sessionId)
+        if (systemPrompt) {
+          args.push('--system-prompt', systemPrompt)
+        }
+      } else {
+        args.push('--resume', this.sessionId)
+      }
+    }
+
+    const child = spawn('claude', args, {
       cwd: this.cwd,
       stdio: ['pipe', 'pipe', 'pipe']
     })

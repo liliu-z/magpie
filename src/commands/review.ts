@@ -306,6 +306,28 @@ export const reviewCommand = new Command('review')
               resolve(answer || null)
             })
           })
+        } : undefined,
+        // Post-analysis Q&A: allow user to ask specific reviewers before debate
+        onPostAnalysisQA: options.interactive ? async () => {
+          return new Promise((resolve) => {
+            console.log(chalk.cyan(`\n💡 You can ask specific reviewers questions before the debate begins.`))
+            console.log(chalk.dim(`   Format: @reviewer_id question (e.g., @claude What about security?)${reviewers.map(r => `\n   Available: @${r.id}`).join('')}`))
+            rl!.question(chalk.yellow('❓ Ask a question or press Enter to start debate: '), (answer) => {
+              if (!answer || answer.trim() === '') {
+                resolve(null)  // Proceed to debate
+                return
+              }
+
+              // Parse @target format
+              const match = answer.match(/^@(\S+)\s+(.+)$/s)
+              if (match) {
+                resolve({ target: match[1], question: match[2] })
+              } else {
+                console.log(chalk.red('   Invalid format. Use: @reviewer_id question'))
+                resolve(null)
+              }
+            })
+          })
         } : undefined
       })
 

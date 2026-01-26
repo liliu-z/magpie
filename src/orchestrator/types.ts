@@ -43,4 +43,6 @@ export interface OrchestratorOptions {
   onInteractive?: () => Promise<string | null>
   onWaiting?: (reviewerId: string) => void
   checkConvergence?: boolean  // Enable convergence detection
+  // Post-analysis Q&A: return { target: '@reviewer_id', question: 'text' } or null to continue
+  onPostAnalysisQA?: () => Promise<{ target: string; question: string } | null>
 }

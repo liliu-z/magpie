@@ -18,6 +18,7 @@ export class DebateOrchestrator {
   private tokenUsage: Map<string, { input: number; output: number }> = new Map()
   private analysis: string = ''  // Store analysis to avoid repeating diff
   private taskPrompt: string = ''  // Original task prompt (contains PR number, etc.)
+  private lastSeenIndex: Map<string, number> = new Map()  // Track what each reviewer has seen
 
   constructor(
     reviewers: Reviewer[],
@@ -90,6 +91,7 @@ ${messagesText}`
   async run(label: string, prompt: string): Promise<DebateResult> {
     this.conversationHistory = []
     this.tokenUsage.clear()
+    this.lastSeenIndex.clear()
     this.taskPrompt = prompt
     let convergedAtRound: number | undefined
 
@@ -125,6 +127,7 @@ ${messagesText}`
           content: response,
           timestamp: new Date()
         })
+        this.markAsSeen(reviewer.id)
 
         this.options.onMessage?.(reviewer.id, response)
       }
@@ -165,92 +168,177 @@ ${messagesText}`
   async runStreaming(label: string, prompt: string): Promise<DebateResult> {
     this.conversationHistory = []
     this.tokenUsage.clear()
+    this.lastSeenIndex.clear()
     this.analysis = ''
     this.taskPrompt = prompt
     let convergedAtRound: number | undefined
 
-    // Run pre-analysis first (with streaming)
-    const analyzeMessages: Message[] = [{ role: 'user', content: prompt }]
-
-    // Stream the analysis
-    this.options.onWaiting?.('analyzer')
-    for await (const chunk of this.analyzer.provider.chatStream(analyzeMessages, this.analyzer.systemPrompt)) {
-      this.analysis += chunk
-      this.options.onMessage?.('analyzer', chunk)
+    // Start sessions for reviewers that support it
+    for (const reviewer of this.reviewers) {
+      reviewer.provider.startSession?.()
     }
-    this.trackTokens('analyzer', prompt + (this.analyzer.systemPrompt || ''), this.analysis)
+    this.analyzer.provider.startSession?.()
+    this.summarizer.provider.startSession?.()
 
-    for (let round = 1; round <= this.options.maxRounds; round++) {
-      for (const reviewer of this.reviewers) {
-        if (this.options.interactive && this.options.onInteractive) {
-          const userInput = await this.options.onInteractive()
-          if (userInput === 'q') break
-          if (userInput) {
-            this.conversationHistory.push({
-              reviewerId: 'user',
-              content: userInput,
-              timestamp: new Date()
-            })
+    try {
+      // Run pre-analysis first (with streaming)
+      const analyzeMessages: Message[] = [{ role: 'user', content: prompt }]
+
+      // Stream the analysis
+      this.options.onWaiting?.('analyzer')
+      for await (const chunk of this.analyzer.provider.chatStream(analyzeMessages, this.analyzer.systemPrompt)) {
+        this.analysis += chunk
+        this.options.onMessage?.('analyzer', chunk)
+      }
+      this.trackTokens('analyzer', prompt + (this.analyzer.systemPrompt || ''), this.analysis)
+
+      // Post-analysis Q&A: let user ask specific reviewers questions before debate
+      if (this.options.onPostAnalysisQA) {
+        while (true) {
+          const qa = await this.options.onPostAnalysisQA()
+          if (!qa) break  // User wants to proceed to debate
+
+          // Find target reviewer (strip @ prefix if present)
+          const targetId = qa.target.replace(/^@/, '')
+          const targetReviewer = this.reviewers.find(r => r.id.toLowerCase() === targetId.toLowerCase())
+
+          if (!targetReviewer) {
+            // Invalid target, skip
+            continue
+          }
+
+          // Build Q&A message
+          const qaMessages: Message[] = [{
+            role: 'user',
+            content: `Based on the analysis above, please answer this question:\n\n${qa.question}`
+          }]
+
+          let qaResponse = ''
+          this.options.onWaiting?.(targetReviewer.id)
+          for await (const chunk of targetReviewer.provider.chatStream(qaMessages, targetReviewer.systemPrompt)) {
+            qaResponse += chunk
+            this.options.onMessage?.(targetReviewer.id, chunk)
+          }
+
+          // Track tokens and add to history
+          this.trackTokens(targetReviewer.id, qa.question, qaResponse)
+          this.conversationHistory.push({
+            reviewerId: 'user',
+            content: `[Question to ${targetReviewer.id}]: ${qa.question}`,
+            timestamp: new Date()
+          })
+          this.conversationHistory.push({
+            reviewerId: targetReviewer.id,
+            content: qaResponse,
+            timestamp: new Date()
+          })
+          this.markAsSeen(targetReviewer.id)
+        }
+      }
+
+      for (let round = 1; round <= this.options.maxRounds; round++) {
+        for (const reviewer of this.reviewers) {
+          if (this.options.interactive && this.options.onInteractive) {
+            const userInput = await this.options.onInteractive()
+            if (userInput === 'q') break
+            if (userInput) {
+              this.conversationHistory.push({
+                reviewerId: 'user',
+                content: userInput,
+                timestamp: new Date()
+              })
+            }
+          }
+
+          const messages = this.buildMessages(reviewer.id)
+          let fullResponse = ''
+
+          // Stream the response
+          this.options.onWaiting?.(reviewer.id)
+          for await (const chunk of reviewer.provider.chatStream(messages, reviewer.systemPrompt)) {
+            fullResponse += chunk
+            this.options.onMessage?.(reviewer.id, chunk)
+          }
+
+          const inputText = messages.map(m => m.content).join('\n') + (reviewer.systemPrompt || '')
+          this.trackTokens(reviewer.id, inputText, fullResponse)
+
+          this.conversationHistory.push({
+            reviewerId: reviewer.id,
+            content: fullResponse,
+            timestamp: new Date()
+          })
+          this.markAsSeen(reviewer.id)
+        }
+
+        // Check convergence if enabled
+        let converged = false
+        if (this.options.checkConvergence && round < this.options.maxRounds) {
+          this.options.onWaiting?.('convergence-check')
+          converged = await this.checkConvergence()
+          if (converged) {
+            convergedAtRound = round
           }
         }
 
-        const messages = this.buildMessages(reviewer.id)
-        let fullResponse = ''
+        this.options.onRoundComplete?.(round, converged)
 
-        // Stream the response
-        this.options.onWaiting?.(reviewer.id)
-        for await (const chunk of reviewer.provider.chatStream(messages, reviewer.systemPrompt)) {
-          fullResponse += chunk
-          this.options.onMessage?.(reviewer.id, chunk)
-        }
-
-        const inputText = messages.map(m => m.content).join('\n') + (reviewer.systemPrompt || '')
-        this.trackTokens(reviewer.id, inputText, fullResponse)
-
-        this.conversationHistory.push({
-          reviewerId: reviewer.id,
-          content: fullResponse,
-          timestamp: new Date()
-        })
-      }
-
-      // Check convergence if enabled
-      let converged = false
-      if (this.options.checkConvergence && round < this.options.maxRounds) {
-        this.options.onWaiting?.('convergence-check')
-        converged = await this.checkConvergence()
         if (converged) {
-          convergedAtRound = round
+          break
         }
       }
 
-      this.options.onRoundComplete?.(round, converged)
+      this.options.onWaiting?.('summarizer')
+      const summaries = await this.collectSummaries()
+      const finalConclusion = await this.getFinalConclusion(summaries)
 
-      if (converged) {
-        break
+      return {
+        prNumber: label,
+        analysis: this.analysis,
+        messages: this.conversationHistory,
+        summaries,
+        finalConclusion,
+        tokenUsage: this.getTokenUsage(),
+        convergedAtRound
       }
-    }
-
-    this.options.onWaiting?.('summarizer')
-    const summaries = await this.collectSummaries()
-    const finalConclusion = await this.getFinalConclusion(summaries)
-
-    return {
-      prNumber: label,
-      analysis: this.analysis,
-      messages: this.conversationHistory,
-      summaries,
-      finalConclusion,
-      tokenUsage: this.getTokenUsage(),
-      convergedAtRound
+    } finally {
+      // End sessions
+      for (const reviewer of this.reviewers) {
+        reviewer.provider.endSession?.()
+      }
+      this.analyzer.provider.endSession?.()
+      this.summarizer.provider.endSession?.()
     }
   }
 
   private buildMessages(currentReviewerId: string): Message[] {
-    const hasHistory = this.conversationHistory.length > 0
+    const reviewer = this.reviewers.find(r => r.id === currentReviewerId)
+    const hasSession = reviewer?.provider.sessionId !== undefined
+    const lastSeen = this.lastSeenIndex.get(currentReviewerId) ?? -1
+    const isFirstCall = lastSeen < 0
     const otherReviewerCount = this.reviewers.length - 1
 
-    // First message: task + analysis
+    // For session mode after first call, only send new messages from others
+    if (hasSession && !isFirstCall) {
+      const newMessages = this.conversationHistory.slice(lastSeen + 1)
+        .filter(m => m.reviewerId !== currentReviewerId)
+
+      if (newMessages.length === 0) {
+        // No new messages to respond to
+        return [{ role: 'user', content: 'Please continue with your review.' }]
+      }
+
+      const newContent = newMessages
+        .map(m => `[AI Reviewer]: ${m.content}`)
+        .join('\n\n---\n\n')
+
+      return [{
+        role: 'user',
+        content: `Other reviewers have responded:\n\n${newContent}\n\nPlease respond to their points.`
+      }]
+    }
+
+    // First call or non-session mode: full context
     let prompt = `Task: ${this.taskPrompt}
 
 Here is the analysis:
@@ -259,6 +347,7 @@ ${this.analysis}
 
 Please review and provide your feedback. You can fetch more details if needed.`
 
+    const hasHistory = this.conversationHistory.length > 0
     if (hasHistory) {
       prompt += `
 
@@ -288,6 +377,11 @@ IMPORTANT:
     }
 
     return messages
+  }
+
+  // Update what a reviewer has seen after they respond
+  private markAsSeen(reviewerId: string): void {
+    this.lastSeenIndex.set(reviewerId, this.conversationHistory.length - 1)
   }
 
   private async collectSummaries(): Promise<DebateSummary[]> {
