@@ -19,6 +19,7 @@ export interface MagpieConfig {
     openai?: ProviderConfig
     google?: ProviderConfig
     'claude-code'?: { enabled: boolean }
+    'codex-cli'?: { enabled: boolean }
   }
   defaults: DefaultsConfig
   reviewers: Record<string, ReviewerConfig>

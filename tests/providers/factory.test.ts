@@ -8,7 +8,8 @@ describe('Provider Factory', () => {
     providers: {
       anthropic: { api_key: 'ant-key' },
       openai: { api_key: 'oai-key' },
-      'claude-code': { enabled: true }
+      'claude-code': { enabled: true },
+      'codex-cli': { enabled: true }
     },
     defaults: { max_rounds: 3, output_format: 'markdown' },
     reviewers: {},
@@ -33,6 +34,10 @@ describe('Provider Factory', () => {
 
     it('should return claude-code for claude-code model', () => {
       expect(getProviderForModel('claude-code')).toBe('claude-code')
+    })
+
+    it('should return codex-cli for codex-cli model', () => {
+      expect(getProviderForModel('codex-cli')).toBe('codex-cli')
     })
   })
 
@@ -64,6 +69,11 @@ describe('Provider Factory', () => {
       }
       const provider = createProvider('gemini-pro', configWithGoogle)
       expect(provider.name).toBe('gemini')
+    })
+
+    it('should create codex-cli provider', () => {
+      const provider = createProvider('codex-cli', mockConfig)
+      expect(provider.name).toBe('codex-cli')
     })
   })
 })
