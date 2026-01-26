@@ -56,5 +56,14 @@ describe('Provider Factory', () => {
       const provider = createProvider('claude-code', mockConfig)
       expect(provider.name).toBe('claude-code')
     })
+
+    it('should create gemini provider', () => {
+      const configWithGoogle = {
+        ...mockConfig,
+        providers: { ...mockConfig.providers, google: { api_key: 'google-key' } }
+      }
+      const provider = createProvider('gemini-pro', configWithGoogle)
+      expect(provider.name).toBe('gemini')
+    })
   })
 })

@@ -21,36 +21,33 @@ defaults:
 
 # Reviewer configurations
 reviewers:
-  security-expert:
-    model: claude-sonnet-4-20250514
+  claude:
+    model: claude-code
     prompt: |
-      You are a security expert. Focus on:
-      - Injection vulnerabilities (SQL, XSS, command injection)
-      - Authentication and authorization issues
-      - Sensitive data handling
-      - Dependency security
+      Review this PR thoroughly. Analyze the code changes and provide feedback on:
+      - Code correctness and potential bugs
+      - Security concerns
+      - Performance implications
+      - Code quality and maintainability
+      - Any other issues you notice
 
-  performance-expert:
-    model: gpt-4o
-    prompt: |
-      You are a performance expert. Focus on:
-      - Time complexity
-      - Memory usage
-      - Unnecessary computation or IO
-      - Caching opportunities
+      Use 'gh pr view' and 'gh pr diff' to get the PR details.
 
-  code-quality-expert:
-    model: claude-sonnet-4-20250514
+  gemini:
+    model: gemini-1.5-flash
     prompt: |
-      You are a code quality expert. Focus on:
-      - Readability and maintainability
-      - Design patterns
-      - Test coverage
-      - Documentation
+      Review this PR thoroughly. Analyze the code changes and provide feedback on:
+      - Code correctness and potential bugs
+      - Security concerns
+      - Performance implications
+      - Code quality and maintainability
+      - Any other issues you notice
+
+      Use 'gh pr view' and 'gh pr diff' to get the PR details.
 
 # Analyzer configuration - runs before debate to provide context
 analyzer:
-  model: claude-sonnet-4-20250514
+  model: claude-code
   prompt: |
     You are a senior engineer providing PR context analysis.
     Before the review debate begins, analyze this PR and provide:
@@ -66,7 +63,7 @@ analyzer:
 
 # Summarizer configuration
 summarizer:
-  model: claude-sonnet-4-20250514
+  model: claude-code
   prompt: |
     You are a neutral technical reviewer.
     Based on the anonymous reviewer summaries, provide:

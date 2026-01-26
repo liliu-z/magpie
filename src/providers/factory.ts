@@ -4,6 +4,7 @@ import type { MagpieConfig } from '../config/types.js'
 import { AnthropicProvider } from './anthropic.js'
 import { OpenAIProvider } from './openai.js'
 import { ClaudeCodeProvider } from './claude-code.js'
+import { GeminiProvider } from './gemini.js'
 
 export function getProviderForModel(model: string): 'anthropic' | 'openai' | 'google' | 'claude-code' {
   if (model === 'claude-code') {
@@ -41,7 +42,7 @@ export function createProvider(model: string, config: MagpieConfig): AIProvider 
     case 'openai':
       return new OpenAIProvider({ apiKey: providerConfig.api_key, model })
     case 'google':
-      throw new Error('Google provider not yet implemented')
+      return new GeminiProvider({ apiKey: providerConfig.api_key, model })
     default:
       throw new Error(`Unknown provider: ${providerName}`)
   }
