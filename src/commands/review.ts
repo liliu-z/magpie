@@ -57,10 +57,36 @@ export const reviewCommand = new Command('review')
           prompt: `Review the following files: ${options.files.join(', ')}.`
         }
       } else if (pr) {
+        // Support both PR number and full URL
+        let prUrl: string
+        let prNumber: string
+
+        if (pr.startsWith('http')) {
+          // Full URL provided
+          prUrl = pr
+          const match = pr.match(/\/pull\/(\d+)/)
+          prNumber = match ? match[1] : pr
+        } else {
+          // Just PR number, try to detect repo from git
+          prNumber = pr
+          try {
+            const remoteUrl = execSync('git remote get-url origin', { encoding: 'utf-8' }).trim()
+            // Convert git@github.com:org/repo.git or https://github.com/org/repo.git to https://github.com/org/repo
+            const repoMatch = remoteUrl.match(/github\.com[:/]([^/]+\/[^/.]+)/)
+            if (repoMatch) {
+              prUrl = `https://github.com/${repoMatch[1]}/pull/${prNumber}`
+            } else {
+              prUrl = `PR #${prNumber}`  // Fallback
+            }
+          } catch {
+            prUrl = `PR #${prNumber}`  // Fallback if not in git repo
+          }
+        }
+
         target = {
           type: 'pr',
-          label: `PR #${pr}`,
-          prompt: `Review PR #${pr}.`
+          label: `PR #${prNumber}`,
+          prompt: `Review ${prUrl}.`
         }
       } else {
         spinner.fail('Error')
