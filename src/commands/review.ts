@@ -23,13 +23,52 @@ export const reviewCommand = new Command('review')
   .option('-o, --output <file>', 'Output to file instead of stdout')
   .option('-f, --format <format>', 'Output format (markdown|json)', 'markdown')
   .option('--no-converge', 'Disable early stop when reviewers reach consensus')
-  .option('-l, --local', 'Review local uncommitted changes')
+  .option('-l, --local', 'Review local uncommitted changes (staged + unstaged)')
   .option('-b, --branch [base]', 'Review current branch vs base (default: main)')
   .option('--files <files...>', 'Review specific files')
   .action(async (pr: string | undefined, options) => {
     const spinner = ora('Loading configuration...').start()
 
     try {
+      // Validate arguments
+      if (!options.local && !options.branch && !options.files && !pr) {
+        spinner.fail('Error')
+        console.error(chalk.red('Error: Please specify a PR number or use --local, --branch, or --files'))
+        process.exit(1)
+      }
+
+      // Get local diff if --local flag is used
+      let localDiff: string | null = null
+      let reviewingLastCommit = false
+      if (options.local) {
+        spinner.text = 'Getting local changes...'
+        try {
+          // Get both staged and unstaged changes
+          const diff = execSync('git diff HEAD', { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 })
+          if (!diff.trim()) {
+            // No uncommitted changes, fall back to last commit
+            spinner.text = 'No uncommitted changes, getting last commit...'
+            const lastCommitDiff = execSync('git diff HEAD~1 HEAD', { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 })
+            if (!lastCommitDiff.trim()) {
+              spinner.fail('No changes found')
+              console.error(chalk.yellow('Tip: Make some changes or commits first, then run again.'))
+              process.exit(0)
+            }
+            localDiff = lastCommitDiff
+            reviewingLastCommit = true
+            const commitMsg = execSync('git log -1 --pretty=%s', { encoding: 'utf-8' }).trim()
+            spinner.succeed(`Reviewing last commit: "${commitMsg}" (${lastCommitDiff.split('\n').length} lines)`)
+          } else {
+            localDiff = diff
+            spinner.succeed(`Found local changes (${diff.split('\n').length} lines)`)
+          }
+        } catch (error) {
+          spinner.fail('Failed to get git diff')
+          console.error(chalk.red('Error: Not a git repository or git is not available'))
+          process.exit(1)
+        }
+      }
+
       const config = loadConfig(options.config)
       spinner.succeed('Configuration loaded')
 
@@ -39,8 +78,10 @@ export const reviewCommand = new Command('review')
       if (options.local) {
         target = {
           type: 'local',
-          label: 'Local Changes',
-          prompt: 'Review the local uncommitted changes (staged and unstaged).'
+          label: reviewingLastCommit ? 'Last Commit' : 'Local Changes',
+          prompt: reviewingLastCommit
+            ? `Please review the following code changes from the last commit:\n\n\`\`\`diff\n${localDiff}\n\`\`\`\n\nAnalyze these changes and provide your feedback.`
+            : `Please review the following local code changes (uncommitted diff):\n\n\`\`\`diff\n${localDiff}\n\`\`\`\n\nAnalyze these changes and provide your feedback.`
         }
       } else if (options.branch !== undefined) {
         const baseBranch = typeof options.branch === 'string' ? options.branch : 'main'
@@ -86,7 +127,7 @@ export const reviewCommand = new Command('review')
         target = {
           type: 'pr',
           label: `PR #${prNumber}`,
-          prompt: `Review ${prUrl}.`
+          prompt: `Please review ${prUrl}. Get the PR details and diff using any method available to you, then analyze the changes.`
         }
       } else {
         spinner.fail('Error')
@@ -242,7 +283,10 @@ export const reviewCommand = new Command('review')
   })
 
 function formatMarkdown(result: any): string {
-  let md = `# Code Review: ${result.prNumber}\n\n`
+  const isLocal = result.prNumber === 'Local Changes' || result.prNumber === 'Last Commit'
+  let md = isLocal
+    ? `# ${result.prNumber} Review\n\n`
+    : `# Code Review: ${result.prNumber}\n\n`
   md += `## Analysis\n\n${result.analysis}\n\n`
   md += `## Debate\n\n`
 
