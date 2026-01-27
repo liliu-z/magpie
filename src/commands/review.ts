@@ -62,6 +62,44 @@ function getRandomJoke(): string {
   return COLD_JOKES[Math.floor(Math.random() * COLD_JOKES.length)]
 }
 
+// Interactive reviewer selection
+async function selectReviewers(availableIds: string[]): Promise<string[]> {
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout
+  })
+
+  console.log(chalk.cyan('\nAvailable reviewers:'))
+  console.log(chalk.dim('  [0] All reviewers'))
+  availableIds.forEach((id, i) => {
+    console.log(chalk.dim(`  [${i + 1}] ${id}`))
+  })
+
+  return new Promise((resolve) => {
+    rl.question(chalk.yellow('\nSelect reviewers (e.g., 1,2 or 0 for all): '), (answer) => {
+      rl.close()
+      const input = answer.trim()
+
+      if (input === '0' || input.toLowerCase() === 'all' || input === '') {
+        resolve(availableIds)
+        return
+      }
+
+      const indices = input.split(',').map(s => parseInt(s.trim(), 10) - 1)
+      const selected = indices
+        .filter(i => i >= 0 && i < availableIds.length)
+        .map(i => availableIds[i])
+
+      if (selected.length === 0) {
+        console.log(chalk.yellow('No valid selection, using all reviewers'))
+        resolve(availableIds)
+      } else {
+        resolve(selected)
+      }
+    })
+  })
+}
+
 interface ReviewTarget {
   type: 'pr' | 'local' | 'branch' | 'files'
   label: string
@@ -81,6 +119,8 @@ export const reviewCommand = new Command('review')
   .option('-b, --branch [base]', 'Review current branch vs base (default: main)')
   .option('--files <files...>', 'Review specific files')
   .option('--git-remote <name>', 'Git remote to use for PR URL detection (default: origin)')
+  .option('--reviewers <ids>', 'Comma-separated reviewer IDs to use (e.g., claude,gemini)')
+  .option('-a, --all', 'Use all reviewers (skip selection)')
   .action(async (pr: string | undefined, options) => {
     const spinner = ora('Loading configuration...').start()
 
@@ -191,11 +231,39 @@ export const reviewCommand = new Command('review')
         process.exit(1)
       }
 
+      // Determine which reviewers to use
+      const allReviewerIds = Object.keys(config.reviewers)
+      let selectedIds: string[]
+
+      if (options.reviewers) {
+        // Use --reviewers flag
+        selectedIds = options.reviewers.split(',').map((s: string) => s.trim())
+        const invalid = selectedIds.filter(id => !allReviewerIds.includes(id))
+        if (invalid.length > 0) {
+          spinner.fail('Error')
+          console.error(chalk.red(`Unknown reviewer(s): ${invalid.join(', ')}`))
+          console.error(chalk.dim(`Available: ${allReviewerIds.join(', ')}`))
+          process.exit(1)
+        }
+      } else if (options.all) {
+        // Use all reviewers
+        selectedIds = allReviewerIds
+      } else {
+        // Default: interactive selection
+        selectedIds = await selectReviewers(allReviewerIds)
+      }
+
+      if (selectedIds.length < 2) {
+        spinner.fail('Error')
+        console.error(chalk.red('Need at least 2 reviewers for a debate'))
+        process.exit(1)
+      }
+
       // Create reviewers
-      const reviewers: Reviewer[] = Object.entries(config.reviewers).map(([id, cfg]) => ({
+      const reviewers: Reviewer[] = selectedIds.map(id => ({
         id,
-        provider: createProvider(cfg.model, config),
-        systemPrompt: cfg.prompt
+        provider: createProvider(config.reviewers[id].model, config),
+        systemPrompt: config.reviewers[id].prompt
       }))
 
       // Create summarizer
