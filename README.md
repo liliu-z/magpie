@@ -133,6 +133,16 @@ Options:
   --reviewers <ids>         Comma-separated reviewer IDs (e.g., claude-code,gemini-cli)
   -a, --all                 Use all configured reviewers (skip selection)
   --git-remote <remote>     Git remote for PR URL detection (default: origin)
+
+  # Repository Review Options
+  --repo                    Review entire repository
+  --path <path>             Subdirectory to review (with --repo)
+  --ignore <patterns...>    Patterns to ignore (with --repo)
+  --quick                   Quick mode: only architecture overview
+  --deep                    Deep mode: full analysis without prompts
+  --list-sessions           List all review sessions
+  --session <id>            Resume specific session by ID
+  --export <file>           Export completed review to markdown
 ```
 
 ### Reviewer Selection
@@ -180,6 +190,37 @@ magpie review --branch develop
 # Review specific files
 magpie review --files src/foo.ts src/bar.ts
 ```
+
+### Repository Review
+
+Review an entire repository with feature-based analysis:
+
+```bash
+# Full repository review (interactive)
+magpie review --repo
+
+# Quick stats only
+magpie review --repo --quick
+
+# Deep analysis (no prompts)
+magpie review --repo --deep
+
+# Review specific subdirectory
+magpie review --repo --path src/api
+
+# List/resume sessions
+magpie review --list-sessions
+magpie review --session abc123
+
+# Export completed review
+magpie review --export review-report.md
+```
+
+Repository review includes:
+- AI-powered feature detection (identifies logical modules)
+- Session persistence (pause/resume reviews)
+- Focus area selection (security, performance, architecture, etc.)
+- Progress saving between runs
 
 ## Workflow
 
