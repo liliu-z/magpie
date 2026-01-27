@@ -60,8 +60,8 @@ export class DebateOrchestrator {
 
   // Check if reviewers have converged (reached consensus)
   private async checkConvergence(): Promise<boolean> {
-    if (this.conversationHistory.length < this.reviewers.length * 2) {
-      return false // Need at least 2 rounds to check
+    if (this.conversationHistory.length < this.reviewers.length) {
+      return false // Need at least 1 complete round to check
     }
 
     // Get last round's messages
@@ -91,7 +91,9 @@ Reply with ONLY one word: CONVERGED or NOT_CONVERGED`
     const messages: Message[] = [{ role: 'user', content: prompt }]
     const response = await this.summarizer.provider.chat(messages, 'You are a strict consensus judge. Be conservative - when in doubt, say NOT_CONVERGED. Reply with only one word.')
 
-    return response.trim().toUpperCase().includes('CONVERGED')
+    const result = response.trim().toUpperCase()
+    // Must be exactly CONVERGED, not NOT_CONVERGED
+    return result === 'CONVERGED' || (result.includes('CONVERGED') && !result.includes('NOT'))
   }
 
   private async preAnalyze(prompt: string): Promise<string> {
