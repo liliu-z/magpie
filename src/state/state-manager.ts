@@ -1,7 +1,8 @@
 // src/state/state-manager.ts
 import { mkdir, readFile, writeFile, readdir } from 'fs/promises'
 import { join } from 'path'
-import type { ReviewSession, FeatureAnalysis } from './types.js'
+import { homedir } from 'os'
+import type { ReviewSession, FeatureAnalysis, DiscussSession } from './types.js'
 
 export class StateManager {
   private baseDir: string
@@ -102,6 +103,58 @@ export class StateManager {
       return data as FeatureAnalysis
     } catch {
       return null
+    }
+  }
+
+  // Discuss session methods — stored in ~/.magpie/discussions/
+  private get discussionsDir(): string {
+    return join(homedir(), '.magpie', 'discussions')
+  }
+
+  async initDiscussions(): Promise<void> {
+    await mkdir(this.discussionsDir, { recursive: true })
+  }
+
+  async saveDiscussSession(session: DiscussSession): Promise<void> {
+    await mkdir(this.discussionsDir, { recursive: true })
+    const filePath = join(this.discussionsDir, `${session.id}.json`)
+    await writeFile(filePath, JSON.stringify(session, null, 2))
+  }
+
+  async loadDiscussSession(id: string): Promise<DiscussSession | null> {
+    const filePath = join(this.discussionsDir, `${id}.json`)
+    try {
+      const content = await readFile(filePath, 'utf-8')
+      const data = JSON.parse(content)
+      data.createdAt = new Date(data.createdAt)
+      data.updatedAt = new Date(data.updatedAt)
+      for (const round of data.rounds) {
+        round.timestamp = new Date(round.timestamp)
+        for (const msg of round.messages) {
+          msg.timestamp = new Date(msg.timestamp)
+        }
+      }
+      return data as DiscussSession
+    } catch {
+      return null
+    }
+  }
+
+  async listDiscussSessions(): Promise<DiscussSession[]> {
+    try {
+      const files = await readdir(this.discussionsDir)
+      const sessions: DiscussSession[] = []
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          const id = file.replace('.json', '')
+          const session = await this.loadDiscussSession(id)
+          if (session) sessions.push(session)
+        }
+      }
+      sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+      return sessions
+    } catch {
+      return []
     }
   }
 }

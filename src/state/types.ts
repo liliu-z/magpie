@@ -27,6 +27,29 @@ export interface FeatureReviewResult {
   reviewedAt: Date
 }
 
+// Discuss session types
+export interface DiscussRound {
+  roundNumber: number
+  topic: string
+  analysis: string
+  messages: Array<{ reviewerId: string; content: string; timestamp: Date }>
+  summaries: Array<{ reviewerId: string; summary: string }>
+  conclusion: string
+  convergedAtRound?: number
+  tokenUsage: Array<{ reviewerId: string; inputTokens: number; outputTokens: number; estimatedCost?: number }>
+  timestamp: Date
+}
+
+export interface DiscussSession {
+  id: string
+  title: string
+  createdAt: Date
+  updatedAt: Date
+  status: 'active' | 'completed'
+  reviewerIds: string[]
+  rounds: DiscussRound[]
+}
+
 export interface ReviewSession {
   id: string
   startedAt: Date
