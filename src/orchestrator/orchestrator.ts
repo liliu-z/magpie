@@ -347,10 +347,21 @@ Focus on finding real issues - be thorough and critical.`
       return [{ role: 'user', content: prompt }]
     }
 
-    // Round 2+: For session mode, only send new messages
+    // Round 2+: For session mode, only send new messages (that this reviewer hasn't seen)
     if (hasSession) {
-      const newMessages = this.conversationHistory.slice(lastSeen + 1)
-        .filter(m => m.reviewerId !== currentReviewerId)
+      // Count how many times this reviewer has spoken
+      const myMessageCount = this.conversationHistory.filter(m => m.reviewerId === currentReviewerId).length
+
+      let newMessages: DebateMessage[]
+      if (myMessageCount === 1) {
+        // Just finished Round 1 (independent phase), entering debate phase
+        // Need ALL other reviewers' messages (they weren't seen in Round 1)
+        newMessages = this.conversationHistory.filter(m => m.reviewerId !== currentReviewerId)
+      } else {
+        // Already in debate phase, only send messages after last seen
+        newMessages = this.conversationHistory.slice(lastSeen + 1)
+          .filter(m => m.reviewerId !== currentReviewerId)
+      }
 
       if (newMessages.length === 0) {
         return [{ role: 'user', content: 'Please continue with your review.' }]
