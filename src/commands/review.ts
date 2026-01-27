@@ -340,6 +340,7 @@ export const reviewCommand = new Command('review')
           const baseLabel = reviewerId === 'analyzer' ? 'Analyzing changes' :
                        reviewerId === 'summarizer' ? 'Generating final summary' :
                        reviewerId === 'convergence-check' ? 'Evaluating if reviewers reached consensus' :
+                       reviewerId.startsWith('round-') ? `Round ${reviewerId.split('-')[1]}: All reviewers thinking (parallel)` :
                        `${reviewerId} is thinking`
 
           // Show spinner with a joke

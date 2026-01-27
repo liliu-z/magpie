@@ -250,38 +250,49 @@ Reply with ONLY one word: CONVERGED or NOT_CONVERGED`
       }
 
       for (let round = 1; round <= this.options.maxRounds; round++) {
-        for (const reviewer of this.reviewers) {
-          if (this.options.interactive && this.options.onInteractive) {
-            const userInput = await this.options.onInteractive()
-            if (userInput === 'q') break
-            if (userInput) {
-              this.conversationHistory.push({
-                reviewerId: 'user',
-                content: userInput,
-                timestamp: new Date()
-              })
+        // Handle interactive mode before round starts
+        if (this.options.interactive && this.options.onInteractive) {
+          const userInput = await this.options.onInteractive()
+          if (userInput === 'q') break
+          if (userInput) {
+            this.conversationHistory.push({
+              reviewerId: 'user',
+              content: userInput,
+              timestamp: new Date()
+            })
+          }
+        }
+
+        // Build messages for all reviewers BEFORE any execution (same info for all)
+        const reviewerTasks = this.reviewers.map(reviewer => ({
+          reviewer,
+          messages: this.buildMessages(reviewer.id)
+        }))
+
+        // Execute all reviewers in parallel
+        this.options.onWaiting?.(`round-${round}`)
+        const results = await Promise.all(
+          reviewerTasks.map(async ({ reviewer, messages }) => {
+            let fullResponse = ''
+            for await (const chunk of reviewer.provider.chatStream(messages, reviewer.systemPrompt)) {
+              fullResponse += chunk
             }
-          }
+            const inputText = messages.map(m => m.content).join('\n') + (reviewer.systemPrompt || '')
+            return { reviewer, fullResponse, inputText }
+          })
+        )
 
-          const messages = this.buildMessages(reviewer.id)
-          let fullResponse = ''
-
-          // Stream the response
-          this.options.onWaiting?.(reviewer.id)
-          for await (const chunk of reviewer.provider.chatStream(messages, reviewer.systemPrompt)) {
-            fullResponse += chunk
-            this.options.onMessage?.(reviewer.id, chunk)
-          }
-
-          const inputText = messages.map(m => m.content).join('\n') + (reviewer.systemPrompt || '')
+        // Display results and add to history (after all complete)
+        for (const { reviewer, fullResponse, inputText } of results) {
           this.trackTokens(reviewer.id, inputText, fullResponse)
-
           this.conversationHistory.push({
             reviewerId: reviewer.id,
             content: fullResponse,
             timestamp: new Date()
           })
           this.markAsSeen(reviewer.id)
+          // Display each reviewer's response
+          this.options.onMessage?.(reviewer.id, fullResponse)
         }
 
         // Check convergence if enabled
