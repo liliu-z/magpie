@@ -347,47 +347,57 @@ Focus on finding real issues - be thorough and critical.`
       return [{ role: 'user', content: prompt }]
     }
 
-    // Round 2+: For session mode, only send new messages (that this reviewer hasn't seen)
-    if (hasSession) {
-      // Count how many times this reviewer has spoken
-      const myMessageCount = this.conversationHistory.filter(m => m.reviewerId === currentReviewerId).length
+    // Round 2+: Each reviewer sees only PREVIOUS rounds (not current round's earlier reviewers)
+    // This ensures everyone in the same round has the same information
+    const myMessageCount = this.conversationHistory.filter(m => m.reviewerId === currentReviewerId).length
 
-      let newMessages: DebateMessage[]
-      if (myMessageCount === 1) {
-        // Just finished Round 1 (independent phase), entering debate phase
-        // Need ALL other reviewers' messages (they weren't seen in Round 1)
-        newMessages = this.conversationHistory.filter(m => m.reviewerId !== currentReviewerId)
-      } else {
-        // Already in debate phase, only send messages after last seen
-        newMessages = this.conversationHistory.slice(lastSeen + 1)
-          .filter(m => m.reviewerId !== currentReviewerId)
+    // Get messages from previous rounds only (each reviewer's first N messages where N = myMessageCount)
+    const messageCountByReviewer = new Map<string, number>()
+    const previousRoundsMessages = this.conversationHistory.filter(msg => {
+      if (msg.reviewerId === currentReviewerId) return false // Exclude own messages
+      if (msg.reviewerId === 'user') return true // Include human interjections
+      const count = messageCountByReviewer.get(msg.reviewerId) || 0
+      if (count < myMessageCount) {
+        messageCountByReviewer.set(msg.reviewerId, count + 1)
+        return true
       }
+      return false // Skip current round messages from other reviewers
+    })
+
+    if (hasSession) {
+      // Session mode: send only new messages (increment from last round)
+      const prevRoundCount = myMessageCount - 1
+      const messageCountByReviewer2 = new Map<string, number>()
+      const newMessages = previousRoundsMessages.filter(msg => {
+        if (msg.reviewerId === 'user') return true
+        const count = messageCountByReviewer2.get(msg.reviewerId) || 0
+        messageCountByReviewer2.set(msg.reviewerId, count + 1)
+        return count >= prevRoundCount // Only messages from round myMessageCount
+      })
 
       if (newMessages.length === 0) {
         return [{ role: 'user', content: 'Please continue with your review.' }]
       }
 
-      // Use specific reviewer IDs so AI knows who said what
       const newContent = newMessages
         .map(m => `[${m.reviewerId}]: ${m.content}`)
         .join('\n\n---\n\n')
 
       return [{
         role: 'user',
-        content: `You are [${currentReviewerId}]. [${otherReviewerIds.join('], [')}] responded:\n\n${newContent}\n\nRespond to their points - agree where valid, challenge where you disagree.`
+        content: `You are [${currentReviewerId}]. Here's what others said in the previous round:\n\n${newContent}\n\nRespond to their points - agree where valid, challenge where you disagree.`
       }]
     }
 
-    // Round 2+ non-session mode: full context with all history
+    // Non-session mode: full context with all previous rounds
     const debateContext = `You are [${currentReviewerId}] in a code review debate with [${otherReviewerIds.join('], [')}].
 Your shared goal: find real issues in the code and reach the best conclusion.
 
 IMPORTANT:
 - You are [${currentReviewerId}], the other reviewer${otherReviewerIds.length > 1 ? 's are' : ' is'} [${otherReviewerIds.join('], [')}]
 - Challenge weak arguments - don't agree just to be polite
-- If [${otherReviewerIds.join('] or [')}] makes a good point, acknowledge it and build on it
-- If you disagree, explain why with evidence
-- Add insights they might have missed`
+- Acknowledge good points and build on them
+- If you disagree, explain why with evidence`
 
     let prompt = `Task: ${this.taskPrompt}
 
@@ -397,19 +407,27 @@ ${this.analysis}
 
 ${debateContext}
 
-Previous discussion:`
+Previous rounds discussion:`
 
     const messages: Message[] = [
       { role: 'user', content: prompt }
     ]
 
-    for (const msg of this.conversationHistory) {
-      const role = msg.reviewerId === currentReviewerId ? 'assistant' : 'user'
-      // Use specific reviewer ID as prefix
+    // Add previous rounds messages (excluding current round)
+    for (const msg of previousRoundsMessages) {
       const prefix = msg.reviewerId === 'user' ? '[Human]: ' : `[${msg.reviewerId}]: `
       messages.push({
-        role,
-        content: role === 'user' ? prefix + msg.content : msg.content
+        role: 'user',
+        content: prefix + msg.content
+      })
+    }
+
+    // Add own previous messages as assistant
+    const myMessages = this.conversationHistory.filter(m => m.reviewerId === currentReviewerId)
+    for (const msg of myMessages) {
+      messages.push({
+        role: 'assistant',
+        content: msg.content
       })
     }
 
