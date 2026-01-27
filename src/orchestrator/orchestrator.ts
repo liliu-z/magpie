@@ -331,8 +331,24 @@ Reply with ONLY one word: CONVERGED or NOT_CONVERGED`
     const isFirstCall = lastSeen < 0
     const otherReviewerIds = this.reviewers.filter(r => r.id !== currentReviewerId).map(r => r.id)
 
-    // For session mode after first call, only send new messages from others
-    if (hasSession && !isFirstCall) {
+    // Round 1: Each reviewer gives independent opinion (no other reviewers' responses)
+    // Round 2+: See all previous context
+    if (isFirstCall) {
+      // First round - independent review, no other reviewers' opinions
+      const prompt = `Task: ${this.taskPrompt}
+
+Here is the analysis:
+
+${this.analysis}
+
+You are [${currentReviewerId}]. Please review and provide your independent assessment.
+Focus on finding real issues - be thorough and critical.`
+
+      return [{ role: 'user', content: prompt }]
+    }
+
+    // Round 2+: For session mode, only send new messages
+    if (hasSession) {
       const newMessages = this.conversationHistory.slice(lastSeen + 1)
         .filter(m => m.reviewerId !== currentReviewerId)
 
@@ -351,7 +367,7 @@ Reply with ONLY one word: CONVERGED or NOT_CONVERGED`
       }]
     }
 
-    // First call or non-session mode: full context
+    // Round 2+ non-session mode: full context with all history
     const debateContext = `You are [${currentReviewerId}] in a code review debate with [${otherReviewerIds.join('], [')}].
 Your shared goal: find real issues in the code and reach the best conclusion.
 
@@ -370,7 +386,7 @@ ${this.analysis}
 
 ${debateContext}
 
-Please review and provide your feedback.`
+Previous discussion:`
 
     const messages: Message[] = [
       { role: 'user', content: prompt }
