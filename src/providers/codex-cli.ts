@@ -40,8 +40,8 @@ export class CodexCliProvider implements AIProvider {
   private runCodex(prompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
       // Use 'codex exec -' to read from stdin (avoids command line length limits)
-      // --sandbox danger-full-access allows network access for gh commands
-      const child = spawn('codex', ['exec', '-', '--sandbox', 'danger-full-access'], {
+      // --dangerously-bypass-approvals-and-sandbox allows full access without prompts
+      const child = spawn('codex', ['exec', '-', '--dangerously-bypass-approvals-and-sandbox'], {
         cwd: this.cwd,
         stdio: ['pipe', 'pipe', 'pipe']
       })

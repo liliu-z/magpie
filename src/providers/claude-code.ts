@@ -69,7 +69,8 @@ export class ClaudeCodeProvider implements AIProvider {
   private runClaude(prompt: string, systemPrompt?: string): Promise<string> {
     return new Promise((resolve, reject) => {
       // Build args based on session state
-      const args = ['-p', '-']
+      // Use --dangerously-skip-permissions to allow network access (e.g., gh commands)
+      const args = ['-p', '-', '--dangerously-skip-permissions']
       if (this.sessionId) {
         if (this.isFirstMessage) {
           args.push('--session-id', this.sessionId)
@@ -117,7 +118,8 @@ export class ClaudeCodeProvider implements AIProvider {
 
   private async *runClaudeStream(prompt: string, systemPrompt?: string): AsyncGenerator<string, void, unknown> {
     // Build args based on session state
-    const args = ['-p', '-']
+    // Use --dangerously-skip-permissions to allow network access (e.g., gh commands)
+    const args = ['-p', '-', '--dangerously-skip-permissions']
     if (this.sessionId) {
       if (this.isFirstMessage) {
         args.push('--session-id', this.sessionId)
