@@ -57,6 +57,9 @@ magpie review 12345
 
 # Or with full URL
 magpie review https://github.com/owner/repo/pull/12345
+
+# Start a discussion on any topic
+magpie discuss "Should we use microservices or monolith?"
 ```
 
 ## Configuration
@@ -145,6 +148,25 @@ Options:
   --export <file>           Export completed review to markdown
 ```
 
+### Discuss Command
+
+```bash
+magpie discuss [topic] [options]
+
+Options:
+  -c, --config <path>       Path to config file
+  -r, --rounds <number>     Maximum debate rounds (default: 5)
+  -i, --interactive         Interactive mode (follow-up Q&A after conclusion)
+  -o, --output <file>       Output to file
+  -f, --format <format>     Output format (markdown|json)
+  --no-converge             Disable convergence detection
+  --reviewers <ids>         Comma-separated reviewer IDs
+  -a, --all                 Use all configured reviewers
+  -d, --devil-advocate      Add a Devil's Advocate to challenge consensus
+  --list                    List all discuss sessions
+  --resume <id>             Resume a discuss session with follow-up question
+```
+
 ### Reviewer Selection
 
 By default, Magpie prompts you to select reviewers interactively:
@@ -221,6 +243,38 @@ Repository review includes:
 - Session persistence (pause/resume reviews)
 - Focus area selection (security, performance, architecture, etc.)
 - Progress saving between runs
+
+### Topic Discussion
+
+Discuss any technical topic with multiple AI reviewers through adversarial debate:
+
+```bash
+# Basic discussion
+magpie discuss "Should we use microservices or monolith for our new project?"
+
+# From a file (supports markdown)
+magpie discuss /path/to/architecture-proposal.md
+
+# With Devil's Advocate to challenge consensus
+magpie discuss "Is Kubernetes overkill for our scale?" -d
+
+# Interactive mode for follow-up Q&A
+magpie discuss "How should we handle database migrations?" -i
+
+# List all discuss sessions
+magpie discuss --list
+
+# Resume a previous discussion with follow-up
+magpie discuss --resume abc123 "What about rollback strategies?"
+```
+
+Discussion features:
+- **Multi-perspective analysis**: Different AI models debate the topic from their unique viewpoints
+- **Devil's Advocate mode** (`-d`): Adds a dedicated contrarian to stress-test ideas
+- **Session persistence**: Save/resume discussions for multi-session deep dives
+- **Language matching**: Automatically responds in the same language as your topic (Chinese/English)
+- **Interactive follow-up**: Continue the discussion with additional questions
+- **Project context**: Optionally loads project-specific context for relevant discussions
 
 ## Workflow
 
