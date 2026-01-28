@@ -60,8 +60,12 @@ function formatTimeSince(date: Date): string {
   return `${days}d ago`
 }
 
-async function selectReviewers(availableIds: string[]): Promise<string[]> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
+async function selectReviewers(availableIds: string[], rl?: ReturnType<typeof createInterface>): Promise<string[]> {
+  // Use provided rl or create a temporary one
+  const useExternalRl = !!rl
+  if (!rl) {
+    rl = createInterface({ input: process.stdin, output: process.stdout })
+  }
 
   console.log(chalk.cyan('\nAvailable reviewers:'))
   console.log(chalk.dim('  [0] All reviewers'))
@@ -70,8 +74,11 @@ async function selectReviewers(availableIds: string[]): Promise<string[]> {
   })
 
   return new Promise((resolve) => {
-    rl.question(chalk.yellow('\nSelect reviewers (e.g., 1,2 or 0 for all): '), (answer) => {
-      rl.close()
+    rl!.question(chalk.yellow('\nSelect reviewers (e.g., 1,2 or 0 for all): '), (answer) => {
+      // Only close if we created it ourselves
+      if (!useExternalRl) {
+        rl!.close()
+      }
       const input = answer.trim()
       if (input === '0' || input.toLowerCase() === 'all' || input === '') {
         resolve(availableIds)
@@ -453,6 +460,8 @@ export const discussCommand = new Command('discuss')
       } else if (options.all) {
         selectedIds = allReviewerIds
       } else {
+        // Pass undefined - selectReviewers will create its own temporary readline
+        // This works because discuss doesn't have the same onPostAnalysisQA flow as review
         selectedIds = await selectReviewers(allReviewerIds)
       }
 

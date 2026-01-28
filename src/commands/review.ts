@@ -72,11 +72,15 @@ function getRandomJoke(): string {
 }
 
 // Interactive reviewer selection
-async function selectReviewers(availableIds: string[]): Promise<string[]> {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout
-  })
+async function selectReviewers(availableIds: string[], rl?: ReturnType<typeof createInterface>): Promise<string[]> {
+  // Use provided rl or create a temporary one
+  const useExternalRl = !!rl
+  if (!rl) {
+    rl = createInterface({
+      input: process.stdin,
+      output: process.stdout
+    })
+  }
 
   console.log(chalk.cyan('\nAvailable reviewers:'))
   console.log(chalk.dim('  [0] All reviewers'))
@@ -85,8 +89,11 @@ async function selectReviewers(availableIds: string[]): Promise<string[]> {
   })
 
   return new Promise((resolve) => {
-    rl.question(chalk.yellow('\nSelect reviewers (e.g., 1,2 or 0 for all): '), (answer) => {
-      rl.close()
+    rl!.question(chalk.yellow('\nSelect reviewers (e.g., 1,2 or 0 for all): '), (answer) => {
+      // Only close if we created it ourselves
+      if (!useExternalRl) {
+        rl!.close()
+      }
       const input = answer.trim()
 
       if (input === '0' || input.toLowerCase() === 'all' || input === '') {
@@ -107,6 +114,96 @@ async function selectReviewers(availableIds: string[]): Promise<string[]> {
       }
     })
   })
+}
+
+// Interactive follow-up Q&A after review conclusion
+async function interactiveFollowUpQA(
+  rl: ReturnType<typeof createInterface>,
+  reviewers: Reviewer[],
+  result: any,
+  spinnerRef: { spinner: ReturnType<typeof ora> | null; interval: ReturnType<typeof setInterval> | null }
+): Promise<void> {
+  // Build context from the review
+  const reviewContext = `
+Previous Review Summary:
+${result.analysis}
+
+Key Discussion Points:
+${result.messages.slice(-reviewers.length).map((m: any) => `[${m.reviewerId}]: ${m.content.slice(0, 500)}...`).join('\n\n')}
+
+Final Conclusion:
+${result.finalConclusion}
+`.trim()
+
+  console.log(chalk.cyan(`\n💬 You can ask follow-up questions about this review.`))
+  console.log(chalk.dim(`   Format: @reviewer_id question (e.g., @claude Can you explain the security issue?)
+   Or just type a question to ask all reviewers.${reviewers.map(r => `\n   Available: @${r.id}`).join('')}`))
+
+  while (true) {
+    const answer = await new Promise<string>((resolve) => {
+      rl.question(chalk.yellow('\n❓ Follow-up (or Enter to end): '), resolve)
+    })
+
+    if (!answer.trim()) {
+      break
+    }
+
+    // Parse @target format or ask all
+    const match = answer.match(/^@(\S+)\s+(.+)$/s)
+    let targetReviewers: Reviewer[]
+    let question: string
+
+    if (match) {
+      const targetId = match[1].replace(/^@/, '')
+      const targetReviewer = reviewers.find(r => r.id.toLowerCase() === targetId.toLowerCase())
+      if (!targetReviewer) {
+        console.log(chalk.red(`   Unknown reviewer: ${targetId}`))
+        continue
+      }
+      targetReviewers = [targetReviewer]
+      question = match[2]
+    } else {
+      targetReviewers = reviewers
+      question = answer
+    }
+
+    const prompt = `Based on the previous code review:
+
+${reviewContext}
+
+Please answer this follow-up question:
+${question}
+
+Provide a focused, helpful response.`
+
+    // Ask each target reviewer
+    for (const reviewer of targetReviewers) {
+      console.log(chalk.cyan.bold(`\n┌─ ${reviewer.id} `))
+      console.log(chalk.cyan(`│`))
+
+      if (spinnerRef.spinner) spinnerRef.spinner.stop()
+      spinnerRef.spinner = ora(`${reviewer.id} is thinking...`).start()
+
+      let response = ''
+      try {
+        for await (const chunk of reviewer.provider.chatStream(
+          [{ role: 'user', content: prompt }],
+          reviewer.systemPrompt
+        )) {
+          if (spinnerRef.spinner) {
+            spinnerRef.spinner.stop()
+            spinnerRef.spinner = null
+          }
+          response += chunk
+          process.stdout.write(chunk)
+        }
+        console.log()
+      } catch (error) {
+        if (spinnerRef.spinner) spinnerRef.spinner.stop()
+        console.log(chalk.red(`   Error: ${error instanceof Error ? error.message : 'Unknown error'}`))
+      }
+    }
+  }
 }
 
 const FOCUS_OPTIONS: { key: string; label: string; focus: ReviewFocus }[] = [
@@ -291,6 +388,16 @@ export const reviewCommand = new Command('review')
         process.exit(1)
       }
 
+      // Setup interactive mode readline early (before reviewer selection)
+      // This ensures we use a single readline instance throughout
+      let rl: ReturnType<typeof createInterface> | null = null
+      if (options.interactive) {
+        rl = createInterface({
+          input: process.stdin,
+          output: process.stdout
+        })
+      }
+
       // Determine which reviewers to use
       const allReviewerIds = Object.keys(config.reviewers)
       let selectedIds: string[]
@@ -303,19 +410,21 @@ export const reviewCommand = new Command('review')
           spinner.fail('Error')
           console.error(chalk.red(`Unknown reviewer(s): ${invalid.join(', ')}`))
           console.error(chalk.dim(`Available: ${allReviewerIds.join(', ')}`))
+          rl?.close()
           process.exit(1)
         }
       } else if (options.all) {
         // Use all reviewers
         selectedIds = allReviewerIds
       } else {
-        // Default: interactive selection
-        selectedIds = await selectReviewers(allReviewerIds)
+        // Default: interactive selection (pass rl to reuse it)
+        selectedIds = await selectReviewers(allReviewerIds, rl || undefined)
       }
 
       if (selectedIds.length < 2) {
         spinner.fail('Error')
         console.error(chalk.red('Need at least 2 reviewers for a debate'))
+        rl?.close()
         process.exit(1)
       }
 
@@ -349,15 +458,6 @@ export const reviewCommand = new Command('review')
       console.log(chalk.dim(`├─ Reviewers: ${reviewers.map(r => chalk.cyan(r.id)).join(', ')}`))
       console.log(chalk.dim(`├─ Max rounds: ${maxRounds}`))
       console.log(chalk.dim(`└─ Convergence: ${checkConvergence ? 'enabled' : 'disabled'}`))
-
-      // Setup interactive mode if enabled
-      let rl: ReturnType<typeof createInterface> | null = null
-      if (options.interactive) {
-        rl = createInterface({
-          input: process.stdin,
-          output: process.stdout
-        })
-      }
 
       let currentReviewer = ''
       let currentRound = 1
@@ -498,6 +598,8 @@ export const reviewCommand = new Command('review')
         } : undefined,
         // Post-analysis Q&A: allow user to ask specific reviewers before debate
         onPostAnalysisQA: options.interactive ? async () => {
+          // Flush analysis buffer before showing interactive prompt
+          flushBuffer()
           return new Promise((resolve) => {
             console.log(chalk.cyan(`\n💡 You can ask specific reviewers questions before the debate begins.`))
             console.log(chalk.dim(`   Format: @reviewer_id question (e.g., @claude What about security?)${reviewers.map(r => `\n   Available: @${r.id}`).join('')}`))
@@ -571,6 +673,11 @@ export const reviewCommand = new Command('review')
           writeFileSync(options.output, formatMarkdown(result))
         }
         console.log(chalk.green(`\n  ✓ Output saved to: ${options.output}`))
+      }
+
+      // Interactive follow-up Q&A after conclusion
+      if (options.interactive && rl) {
+        await interactiveFollowUpQA(rl, reviewers, result, spinnerRef)
       }
 
       console.log()
