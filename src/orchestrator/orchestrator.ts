@@ -65,36 +65,54 @@ export class DebateOrchestrator {
       return false // Need at least 1 complete round to check
     }
 
+    // Count how many rounds have been completed
+    const roundsCompleted = Math.floor(this.conversationHistory.length / this.reviewers.length)
+
+    // Round 1 is always independent reviews - reviewers haven't seen each other's opinions yet
+    // True convergence requires at least one round of cross-examination
+    if (roundsCompleted < 2) {
+      return false // Need at least 2 rounds for meaningful convergence
+    }
+
     // Get last round's messages
     const lastRoundMessages = this.conversationHistory.slice(-this.reviewers.length)
     const messagesText = lastRoundMessages
       .map(m => `[${m.reviewerId}]: ${m.content}`)
       .join('\n\n---\n\n')
 
-    const prompt = `You are a strict judge. Analyze whether these ${this.reviewers.length} reviewers have reached TRUE CONSENSUS.
+    const prompt = `You are a strict consensus judge. Analyze whether these ${this.reviewers.length} reviewers have reached TRUE CONSENSUS.
 
-CONSENSUS means:
-- All reviewers agree on the SAME final verdict (e.g., all say "approve" or all say "request changes")
-- No reviewer explicitly rejects or disagrees with another's core position
-- They may have minor differences but agree on what actions to take
+IMPORTANT: This is Round ${roundsCompleted}. Reviewers have now seen each other's opinions.
+
+TRUE CONSENSUS requires ALL of the following:
+1. All reviewers agree on the SAME final verdict (all approve OR all request changes)
+2. Critical/blocking issues identified by ANY reviewer are acknowledged by ALL others
+3. No reviewer has raised a concern that others have ignored or dismissed without addressing
+4. They explicitly agree on what actions to take (not just "no disagreement")
 
 NOT CONSENSUS if ANY of these:
-- One reviewer says "I disagree with [X]" or "I reject [X]'s view"
-- Reviewers give different verdicts (one approves, another requests changes)
-- One reviewer explicitly challenges another's reasoning as flawed
-- They agree on problems but disagree on severity or required actions
+- One reviewer identified a Critical/Important issue that others didn't address
+- Reviewers found DIFFERENT sets of issues without cross-validating each other's findings
+- One reviewer says "I disagree" or challenges another's reasoning
+- Reviewers give different verdicts or severity assessments
+- Silence on another's point (not responding to it) - silence is NOT agreement
+- They list problems but haven't confirmed they agree on the complete list
 
-Reviews:
+Reviews from Round ${roundsCompleted}:
 ${messagesText}
 
-Reply with ONLY one word: CONVERGED or NOT_CONVERGED`
+Respond with EXACTLY one word on its own line: CONVERGED or NOT_CONVERGED`
 
     const messages: Message[] = [{ role: 'user', content: prompt }]
-    const response = await this.summarizer.provider.chat(messages, 'You are a strict consensus judge. Be conservative - when in doubt, say NOT_CONVERGED. Reply with only one word.')
+    const response = await this.summarizer.provider.chat(
+      messages,
+      'You are a strict consensus judge. Be VERY conservative - if there is ANY doubt, respond NOT_CONVERGED. Respond with exactly one word: CONVERGED or NOT_CONVERGED. Nothing else.'
+    )
 
+    // Parse response strictly - only accept exact match
     const result = response.trim().toUpperCase()
-    // Must be exactly CONVERGED, not NOT_CONVERGED
-    return result === 'CONVERGED' || (result.includes('CONVERGED') && !result.includes('NOT'))
+    const firstWord = result.split(/\s+/)[0] // Take only the first word
+    return firstWord === 'CONVERGED'
   }
 
   private async preAnalyze(prompt: string): Promise<string> {
