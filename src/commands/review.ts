@@ -18,6 +18,7 @@ import { StateManager } from '../state/index.js'
 import type { ReviewSession, FeatureAnalysis } from '../state/types.js'
 import { FeatureAnalyzer } from '../feature-analyzer/index.js'
 import { FeaturePlanner } from '../planner/feature-planner.js'
+import { ContextGatherer } from '../context-gatherer/index.js'
 
 // Configure marked to render for terminal
 marked.setOptions({
@@ -259,6 +260,7 @@ export const reviewCommand = new Command('review')
   .option('--list-sessions', 'List all review sessions')
   .option('--session <id>', 'Resume specific session by ID')
   .option('--export <file>', 'Export completed review to markdown')
+  .option('--skip-context', 'Skip context gathering phase')
   .action(async (pr: string | undefined, options) => {
     const spinner = ora('Loading configuration...').start()
 
@@ -464,6 +466,22 @@ export const reviewCommand = new Command('review')
         systemPrompt: config.analyzer.prompt
       }
 
+      // Create context gatherer (if enabled)
+      let contextGatherer: ContextGatherer | undefined
+      const contextEnabled = !options.skipContext && (config.contextGatherer?.enabled !== false)
+
+      if (contextEnabled) {
+        const contextModel = config.contextGatherer?.model || config.analyzer.model
+        contextGatherer = new ContextGatherer({
+          provider: createProvider(contextModel, config),
+          options: {
+            callChain: config.contextGatherer?.callChain,
+            history: config.contextGatherer?.history,
+            docs: config.contextGatherer?.docs
+          }
+        })
+      }
+
       const maxRounds = parseInt(options.rounds, 10)
       // Convergence: default from config, CLI can override with --no-converge
       const checkConvergence = options.converge !== false && (config.defaults.check_convergence !== false)
@@ -472,7 +490,8 @@ export const reviewCommand = new Command('review')
       console.log(chalk.bgBlue.white.bold(` ${target.label} Review `))
       console.log(chalk.dim(`├─ Reviewers: ${reviewers.map(r => chalk.cyan(r.id)).join(', ')}`))
       console.log(chalk.dim(`├─ Max rounds: ${maxRounds}`))
-      console.log(chalk.dim(`└─ Convergence: ${checkConvergence ? 'enabled' : 'disabled'}`))
+      console.log(chalk.dim(`├─ Convergence: ${checkConvergence ? 'enabled' : 'disabled'}`))
+      console.log(chalk.dim(`└─ Context gathering: ${contextEnabled ? 'enabled' : 'disabled'}`))
 
       let currentReviewer = ''
       let currentRound = 1
@@ -532,7 +551,8 @@ export const reviewCommand = new Command('review')
           }
 
           const isParallelRound = reviewerId.startsWith('round-')
-          const baseLabel = reviewerId === 'analyzer' ? 'Analyzing changes' :
+          const baseLabel = reviewerId === 'context-gatherer' ? 'Gathering system context' :
+                       reviewerId === 'analyzer' ? 'Analyzing changes' :
                        reviewerId === 'summarizer' ? 'Generating final summary' :
                        reviewerId === 'convergence-check' ? 'Evaluating if reviewers reached consensus' :
                        isParallelRound ? `Round ${reviewerId.split('-')[1]}: Starting parallel review` :
@@ -641,8 +661,37 @@ export const reviewCommand = new Command('review')
               }
             })
           })
-        } : undefined
-      })
+        } : undefined,
+        onContextGathered: (context) => {
+          // Display context gathering result
+          console.log(chalk.magenta.bold(`\n${'─'.repeat(50)}`))
+          console.log(chalk.magenta.bold(`  🔍 System Context`))
+          console.log(chalk.magenta.bold(`${'─'.repeat(50)}\n`))
+
+          if (context.affectedModules.length > 0) {
+            console.log(chalk.dim(`Affected Modules:`))
+            for (const mod of context.affectedModules) {
+              const impact = mod.impactLevel === 'core' ? chalk.red('●') :
+                             mod.impactLevel === 'moderate' ? chalk.yellow('●') :
+                             chalk.green('●')
+              console.log(chalk.dim(`  ${impact} ${mod.name} (${mod.affectedFiles.length} files)`))
+            }
+            console.log()
+          }
+
+          if (context.relatedPRs.length > 0) {
+            console.log(chalk.dim(`Related PRs:`))
+            for (const pr of context.relatedPRs.slice(0, 5)) {
+              console.log(chalk.dim(`  • #${pr.number}: ${pr.title}`))
+            }
+            console.log()
+          }
+
+          if (context.summary) {
+            console.log(marked(fixMarkdown(context.summary)))
+          }
+        }
+      }, contextGatherer)
 
       const result = await orchestrator.runStreaming(target.label, target.prompt)
 
