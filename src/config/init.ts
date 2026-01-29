@@ -148,6 +148,24 @@ summarizer:
     - Points of consensus
     - Points of disagreement with analysis
     - Recommended action items
+
+# Context gatherer configuration (collects system-level context before review)
+contextGatherer:
+  enabled: true
+  # model: ${analyzerModel}  # Optional: defaults to analyzer model
+  callChain:
+    maxDepth: 2
+    maxFilesToAnalyze: 20
+  history:
+    maxDays: 30
+    maxPRs: 10
+  docs:
+    patterns:
+      - docs
+      - README.md
+      - ARCHITECTURE.md
+      - DESIGN.md
+    maxSize: 50000
 `
 
   return config
