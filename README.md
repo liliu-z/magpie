@@ -116,6 +116,24 @@ summarizer:
     2. Points of disagreement
     3. Recommended action items
     4. Overall assessment
+
+# Context Gatherer - system context before review (optional)
+contextGatherer:
+  enabled: true              # Enable/disable context gathering
+  model: claude-code         # Optional: defaults to analyzer model
+  callChain:
+    maxDepth: 2              # How deep to trace call chains
+    maxFilesToAnalyze: 20    # Max files to analyze for call chains
+  history:
+    maxDays: 30              # Look back period for related PRs
+    maxPRs: 10               # Max related PRs to include
+  docs:
+    patterns:                # Doc files to include for context
+      - docs
+      - README.md
+      - ARCHITECTURE.md
+      - DESIGN.md
+    maxSize: 50000           # Max total size of doc content
 ```
 
 ## CLI Options
@@ -136,6 +154,9 @@ Options:
   --reviewers <ids>         Comma-separated reviewer IDs (e.g., claude-code,gemini-cli)
   -a, --all                 Use all configured reviewers (skip selection)
   --git-remote <remote>     Git remote for PR URL detection (default: origin)
+  --skip-context            Skip context gathering phase
+  --plan-only               Generate review plan without executing
+  --reanalyze               Force re-analyze features (ignore cache)
 
   # Repository Review Options
   --repo                    Review entire repository
@@ -279,11 +300,14 @@ Discussion features:
 ## Workflow
 
 ```
-1. Analyzer analyzes PR
+1. Context Gathering (if enabled)
+   │  Collects: affected modules, related PRs, call chains
    ↓
-2. [Interactive] Post-analysis Q&A (ask specific reviewers)
+2. Analyzer analyzes PR
    ↓
-3. Multi-round debate
+3. [Interactive] Post-analysis Q&A (ask specific reviewers)
+   ↓
+4. Multi-round debate
    ├─ Round 1: All reviewers give INDEPENDENT opinions (parallel)
    │           No reviewer sees others' responses yet
    │           ↓
@@ -295,9 +319,9 @@ Discussion features:
    │            ↓
    └─ ... (repeat until max rounds or convergence)
    ↓
-4. Each Reviewer summarizes their points
+5. Each Reviewer summarizes their points
    ↓
-5. Summarizer produces final conclusion
+6. Summarizer produces final conclusion
 ```
 
 ### Fair Debate Model
@@ -312,6 +336,28 @@ Magpie uses a fair debate model where:
 This ensures no reviewer has an unfair advantage from execution order.
 
 ## Features
+
+### Context Gathering
+
+Before the review begins, Magpie automatically gathers system-level context to help reviewers understand the broader impact of changes:
+
+- **Affected Modules**: Identifies which parts of the system are impacted (core, moderate, low)
+- **Related PRs**: Finds relevant past PRs from project history
+- **Call Chain Analysis**: Traces how changed code connects to the rest of the system
+
+```
+┌─ System Context ─────────────────────────────────────────┐
+│ Affected Modules:                                        │
+│   • [core] src/orchestrator - Main review orchestration  │
+│   • [moderate] src/config - Configuration handling       │
+│                                                          │
+│ Related PRs:                                             │
+│   • #42 - Added streaming support                        │
+│   • #38 - Refactored provider interface                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+Use `--skip-context` to disable, or configure in `contextGatherer` section of config.
 
 ### Session Persistence
 
