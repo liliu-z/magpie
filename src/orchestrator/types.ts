@@ -52,6 +52,7 @@ export interface OrchestratorOptions {
   onWaiting?: (reviewerId: string) => void
   onParallelStatus?: (round: number, statuses: ReviewerStatus[]) => void  // Track parallel execution
   checkConvergence?: boolean  // Enable convergence detection
+  onConvergenceJudgment?: (verdict: 'CONVERGED' | 'NOT_CONVERGED', reasoning: string) => void  // Convergence judgment details
   // Post-analysis Q&A: return { target: '@reviewer_id', question: 'text' } or null to continue
   onPostAnalysisQA?: () => Promise<{ target: string; question: string } | null>
 }

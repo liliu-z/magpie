@@ -22,10 +22,22 @@ import { FeaturePlanner } from '../planner/feature-planner.js'
 // Configure marked to render for terminal
 marked.setOptions({
   renderer: new TerminalRenderer({
-    reflowText: true,
-    width: 80,
+    reflowText: true,   // Reflow text to fit terminal width
+    width: 120,         // Wider output for modern terminals
   }) as any
 })
+
+// Fix malformed markdown from some LLMs (e.g., Codex uses indented lists)
+function fixMarkdown(text: string): string {
+  return text
+    // Convert indented bullet lists to standard format: "    * item" -> "- item"
+    .replace(/^[ ]{2,}\* /gm, '- ')
+    // Convert indented numbered lists: "    1. item" -> "1. item"
+    .replace(/^[ ]{2,}(\d+)\. /gm, '$1. ')
+    // Fix code blocks that use indentation instead of fences
+    // (4+ spaces at start of line after a blank line = code block in markdown)
+    // We leave these alone as they're valid markdown
+}
 
 // Cold jokes to display while waiting
 const COLD_JOKES = [
@@ -494,7 +506,7 @@ export const reviewCommand = new Command('review')
       // Render buffered message when reviewer changes
       const flushBuffer = () => {
         if (messageBuffer) {
-          console.log(marked(messageBuffer))
+          console.log(marked(fixMarkdown(messageBuffer)))
           messageBuffer = ''
         }
       }
@@ -543,8 +555,8 @@ export const reviewCommand = new Command('review')
           spinnerRef.parallelStatuses = null  // Reset for new waiting phase
           spinnerRef.spinner = ora(`${baseLabel}...`).start()
           updateSpinner()
-          // Update joke every 8 seconds
-          spinnerRef.interval = setInterval(updateSpinner, 8000)
+          // Update joke every 15 seconds
+          spinnerRef.interval = setInterval(updateSpinner, 15000)
         },
         onParallelStatus: (round, statuses) => {
           spinnerRef.parallelStatuses = statuses
@@ -579,6 +591,13 @@ export const reviewCommand = new Command('review')
           }
           // Buffer the chunk instead of writing directly
           messageBuffer += chunk
+        },
+        onConvergenceJudgment: (verdict, reasoning) => {
+          // Display the judge's reasoning
+          if (reasoning) {
+            console.log(chalk.dim(`│`))
+            console.log(chalk.dim(`│ ${reasoning.split('\n').join('\n│ ')}`))
+          }
         },
         onRoundComplete: (round, converged) => {
           console.log()
@@ -645,7 +664,7 @@ export const reviewCommand = new Command('review')
       console.log(chalk.green.bold(`  🎯 Final Conclusion`))
       console.log(chalk.green.bold(`${'═'.repeat(50)}\n`))
       // Render markdown for terminal
-      console.log(marked(result.finalConclusion))
+      console.log(marked(fixMarkdown(result.finalConclusion)))
 
       // Display token usage
       console.log(chalk.dim(`\n${'─'.repeat(50)}`))

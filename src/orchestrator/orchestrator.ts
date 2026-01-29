@@ -101,18 +101,31 @@ NOT CONSENSUS if ANY of these:
 Reviews from Round ${roundsCompleted}:
 ${messagesText}
 
-Respond with EXACTLY one word on its own line: CONVERGED or NOT_CONVERGED`
+First, provide a brief reasoning (2-3 sentences) explaining your judgment.
+Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED`
 
     const messages: Message[] = [{ role: 'user', content: prompt }]
     const response = await this.summarizer.provider.chat(
       messages,
-      'You are a strict consensus judge. Be VERY conservative - if there is ANY doubt, respond NOT_CONVERGED. Respond with exactly one word: CONVERGED or NOT_CONVERGED. Nothing else.'
+      'You are a strict consensus judge. Be VERY conservative - if there is ANY doubt, respond NOT_CONVERGED. Provide brief reasoning, then on the last line respond with exactly one word: CONVERGED or NOT_CONVERGED.'
     )
 
-    // Parse response strictly - only accept exact match
-    const result = response.trim().toUpperCase()
-    const firstWord = result.split(/\s+/)[0] // Take only the first word
-    return firstWord === 'CONVERGED'
+    // Parse response - extract verdict from last line, rest is reasoning
+    const lines = response.trim().split('\n')
+    const lastLine = lines[lines.length - 1].trim().toUpperCase()
+    const verdict = lastLine.split(/\s+/)[0]
+    const isConverged = verdict === 'CONVERGED'
+
+    // Extract reasoning (everything except the last line)
+    const reasoning = lines.slice(0, -1).join('\n').trim()
+
+    // Notify callback with judgment details
+    this.options.onConvergenceJudgment?.(
+      isConverged ? 'CONVERGED' : 'NOT_CONVERGED',
+      reasoning || response.trim()
+    )
+
+    return isConverged
   }
 
   private async preAnalyze(prompt: string): Promise<string> {
