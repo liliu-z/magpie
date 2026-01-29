@@ -14,6 +14,23 @@ export interface DefaultsConfig {
   check_convergence: boolean
 }
 
+export interface ContextGathererConfigOptions {
+  enabled: boolean
+  callChain?: {
+    maxDepth?: number
+    maxFilesToAnalyze?: number
+  }
+  history?: {
+    maxDays?: number
+    maxPRs?: number
+  }
+  docs?: {
+    patterns?: string[]
+    maxSize?: number
+  }
+  model?: string  // Model to use for context analysis
+}
+
 export interface MagpieConfig {
   providers: {
     anthropic?: ProviderConfig
@@ -26,4 +43,5 @@ export interface MagpieConfig {
   reviewers: Record<string, ReviewerConfig>
   summarizer: ReviewerConfig
   analyzer: ReviewerConfig
+  contextGatherer?: ContextGathererConfigOptions
 }
