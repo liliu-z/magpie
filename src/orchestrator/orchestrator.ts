@@ -9,15 +9,19 @@ import type {
   TokenUsage,
   ReviewerStatus
 } from './types.js'
+import type { ContextGatherer } from '../context-gatherer/gatherer.js'
+import type { GatheredContext } from '../context-gatherer/types.js'
 
 export class DebateOrchestrator {
   private reviewers: Reviewer[]
   private summarizer: Reviewer
   private analyzer: Reviewer
+  private contextGatherer: ContextGatherer | null
   private options: OrchestratorOptions
   private conversationHistory: DebateMessage[] = []
   private tokenUsage: Map<string, { input: number; output: number }> = new Map()
   private analysis: string = ''  // Store analysis to avoid repeating diff
+  private gatheredContext: GatheredContext | null = null  // Store gathered context
   private taskPrompt: string = ''  // Original task prompt (contains PR number, etc.)
   private lastSeenIndex: Map<string, number> = new Map()  // Track what each reviewer has seen
 
@@ -25,11 +29,13 @@ export class DebateOrchestrator {
     reviewers: Reviewer[],
     summarizer: Reviewer,
     analyzer: Reviewer,
-    options: OrchestratorOptions
+    options: OrchestratorOptions,
+    contextGatherer?: ContextGatherer
   ) {
     this.reviewers = reviewers
     this.summarizer = summarizer
     this.analyzer = analyzer
+    this.contextGatherer = contextGatherer || null
     this.options = options
   }
 
@@ -126,6 +132,19 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
     )
 
     return isConverged
+  }
+
+  /**
+   * Extract diff content from prompt (for local/branch reviews)
+   */
+  private extractDiffFromPrompt(prompt: string): string {
+    // If prompt contains diff directly (local/branch review), extract it
+    const diffMatch = prompt.match(/```diff\n([\s\S]*?)```/)
+    if (diffMatch) {
+      return diffMatch[1]
+    }
+    // For PR reviews, return the full prompt (diff will be fetched by reviewer)
+    return prompt
   }
 
   private async preAnalyze(prompt: string): Promise<string> {
@@ -228,7 +247,20 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
     this.summarizer.provider.startSession?.()
 
     try {
-      // Run pre-analysis first (with streaming)
+      // Run context gathering first (if enabled)
+      if (this.contextGatherer) {
+        this.options.onWaiting?.('context-gatherer')
+        try {
+          const diff = this.extractDiffFromPrompt(prompt)
+          this.gatheredContext = await this.contextGatherer.gather(diff, label, 'main')
+          this.options.onContextGathered?.(this.gatheredContext)
+        } catch (error) {
+          // Context gathering is optional, continue without it
+          console.warn('Context gathering failed:', error)
+        }
+      }
+
+      // Run pre-analysis (with streaming)
       const analyzeMessages: Message[] = [{ role: 'user', content: prompt }]
 
       // Stream the analysis
@@ -382,6 +414,7 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
       return {
         prNumber: label,
         analysis: this.analysis,
+        context: this.gatheredContext || undefined,
         messages: this.conversationHistory,
         summaries,
         finalConclusion,
@@ -408,10 +441,19 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
     // Round 1: Each reviewer gives independent opinion (no other reviewers' responses)
     // Round 2+: See all previous context
     if (isFirstCall) {
+      // Build context section if available
+      let contextSection = ''
+      if (this.gatheredContext?.summary) {
+        contextSection = `
+## System Context
+${this.gatheredContext.summary}
+
+`
+      }
+
       // First round - independent review, no other reviewers' opinions
       const prompt = `Task: ${this.taskPrompt}
-
-Here is the analysis:
+${contextSection}Here is the analysis:
 
 ${this.analysis}
 
