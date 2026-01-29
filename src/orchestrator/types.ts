@@ -1,5 +1,6 @@
 // src/orchestrator/types.ts
 import type { AIProvider } from '../providers/types.js'
+import type { GatheredContext } from '../context-gatherer/types.js'
 
 export interface Reviewer {
   id: string
@@ -28,6 +29,7 @@ export interface TokenUsage {
 export interface DebateResult {
   prNumber: string
   analysis: string
+  context?: GatheredContext
   messages: DebateMessage[]
   summaries: DebateSummary[]
   finalConclusion: string
@@ -55,4 +57,5 @@ export interface OrchestratorOptions {
   onConvergenceJudgment?: (verdict: 'CONVERGED' | 'NOT_CONVERGED', reasoning: string) => void  // Convergence judgment details
   // Post-analysis Q&A: return { target: '@reviewer_id', question: 'text' } or null to continue
   onPostAnalysisQA?: () => Promise<{ target: string; question: string } | null>
+  onContextGathered?: (context: GatheredContext) => void  // Context gathering complete callback
 }
