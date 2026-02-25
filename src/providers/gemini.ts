@@ -6,17 +6,21 @@ export class GeminiProvider implements AIProvider {
   name = 'gemini'
   private client: GoogleGenerativeAI
   private model: string
+  private requestOptions?: { baseUrl: string }
 
   constructor(options: ProviderOptions) {
     this.client = new GoogleGenerativeAI(options.apiKey)
     this.model = options.model
+    if (options.baseURL) {
+      this.requestOptions = { baseUrl: options.baseURL }
+    }
   }
 
   async chat(messages: Message[], systemPrompt?: string): Promise<string> {
     const model = this.client.getGenerativeModel({
       model: this.model,
       systemInstruction: systemPrompt ? { role: 'user', parts: [{ text: systemPrompt }] } : undefined
-    })
+    }, this.requestOptions)
 
     // Build conversation history
     const history = messages.slice(0, -1).map(m => ({
@@ -35,7 +39,7 @@ export class GeminiProvider implements AIProvider {
     const model = this.client.getGenerativeModel({
       model: this.model,
       systemInstruction: systemPrompt ? { role: 'user', parts: [{ text: systemPrompt }] } : undefined
-    })
+    }, this.requestOptions)
 
     const history = messages.slice(0, -1).map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',

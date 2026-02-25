@@ -75,5 +75,25 @@ describe('Provider Factory', () => {
       const provider = createProvider('codex-cli', mockConfig)
       expect(provider.name).toBe('codex-cli')
     })
+
+    it('should pass base_url through to API providers', () => {
+      const configWithBaseUrl: MagpieConfig = {
+        ...mockConfig,
+        providers: {
+          anthropic: { api_key: 'ant-key', base_url: 'https://my-proxy.example.com' },
+          openai: { api_key: 'oai-key', base_url: 'https://my-openai-proxy.example.com/v1' },
+        }
+      }
+      const anthropicProvider = createProvider('claude-sonnet-4-20250514', configWithBaseUrl)
+      expect(anthropicProvider.name).toBe('anthropic')
+
+      const openaiProvider = createProvider('gpt-4o', configWithBaseUrl)
+      expect(openaiProvider.name).toBe('openai')
+    })
+
+    it('should work without base_url (backwards compatible)', () => {
+      const provider = createProvider('claude-sonnet-4-20250514', mockConfig)
+      expect(provider.name).toBe('anthropic')
+    })
   })
 })

@@ -26,6 +26,20 @@ Multi-AI adversarial PR review tool. Let different AI models review your code li
 
 **Recommended**: Use CLI providers (claude-code, codex-cli, gemini-cli, qwen-code) - they're free with your subscriptions and don't require API keys.
 
+### Custom API Endpoints
+
+All API providers support custom `base_url` for connecting to compatible third-party services (Azure OpenAI, Ollama, vLLM, one-api, etc.):
+
+```yaml
+providers:
+  openai:
+    api_key: ${OPENAI_API_KEY}
+    base_url: https://my-ollama-server:11434/v1
+  anthropic:
+    api_key: ${ANTHROPIC_API_KEY}
+    base_url: https://my-proxy.example.com
+```
+
 ## Installation
 
 ```bash
@@ -74,6 +88,7 @@ Config file is located at `~/.magpie/config.yaml`:
 providers:
   minimax:
     api_key: your-minimax-api-key   # or set MINIMAX_API_KEY env var
+    base_url: https://custom-endpoint.example.com/v1  # optional: custom API endpoint
 
 # Default settings
 defaults:

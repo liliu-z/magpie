@@ -8,7 +8,7 @@ export class OpenAIProvider implements AIProvider {
   private model: string
 
   constructor(options: ProviderOptions) {
-    this.client = new OpenAI({ apiKey: options.apiKey })
+    this.client = new OpenAI({ apiKey: options.apiKey, baseURL: options.baseURL })
     this.model = options.model
   }
 

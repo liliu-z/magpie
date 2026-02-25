@@ -81,6 +81,7 @@ export function createProvider(model: string, config: MagpieConfig): AIProvider 
     return new MiniMaxProvider({
       apiKey: providerConfig?.api_key || process.env.MINIMAX_API_KEY || '',
       model: 'MiniMax-M2.5',
+      baseURL: providerConfig?.base_url,
     })
   }
 
@@ -92,11 +93,11 @@ export function createProvider(model: string, config: MagpieConfig): AIProvider 
 
   switch (providerName) {
     case 'anthropic':
-      return new AnthropicProvider({ apiKey: providerConfig.api_key, model })
+      return new AnthropicProvider({ apiKey: providerConfig.api_key, model, baseURL: providerConfig.base_url })
     case 'openai':
-      return new OpenAIProvider({ apiKey: providerConfig.api_key, model })
+      return new OpenAIProvider({ apiKey: providerConfig.api_key, model, baseURL: providerConfig.base_url })
     case 'google':
-      return new GeminiProvider({ apiKey: providerConfig.api_key, model })
+      return new GeminiProvider({ apiKey: providerConfig.api_key, model, baseURL: providerConfig.base_url })
     default:
       throw new Error(`Unknown provider: ${providerName}`)
   }

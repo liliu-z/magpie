@@ -25,6 +25,7 @@ export interface AIProvider {
 export interface ProviderOptions {
   apiKey: string
   model: string
+  baseURL?: string
 }
 
 // Helper to generate session IDs

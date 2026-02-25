@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { AnthropicProvider } from '../../src/providers/anthropic.js'
 
-// Mock the SDK
+let lastConstructorOptions: Record<string, unknown> = {}
+
 vi.mock('@anthropic-ai/sdk', () => ({
   default: class MockAnthropic {
     messages = {
@@ -15,6 +16,9 @@ vi.mock('@anthropic-ai/sdk', () => ({
         },
         abort: vi.fn()
       })
+    }
+    constructor(options: Record<string, unknown>) {
+      lastConstructorOptions = options
     }
   }
 }))
@@ -38,5 +42,15 @@ describe('AnthropicProvider', () => {
       chunks.push(chunk)
     }
     expect(chunks).toEqual(['chunk1', 'chunk2'])
+  })
+
+  it('should pass baseURL to SDK when provided', () => {
+    new AnthropicProvider({ apiKey: 'test', model: 'claude-sonnet-4-20250514', baseURL: 'https://my-proxy.example.com' })
+    expect(lastConstructorOptions.baseURL).toBe('https://my-proxy.example.com')
+  })
+
+  it('should not set baseURL when not provided', () => {
+    new AnthropicProvider({ apiKey: 'test', model: 'claude-sonnet-4-20250514' })
+    expect(lastConstructorOptions.baseURL).toBeUndefined()
   })
 })

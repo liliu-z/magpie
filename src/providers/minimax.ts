@@ -10,7 +10,7 @@ export class MiniMaxProvider implements AIProvider {
   name = 'minimax'
   private apiKey: string
   private model: string
-  private baseUrl = 'https://api.minimax.io/v1'
+  private baseUrl: string
   sessionId?: string
   private conversationHistory: Message[] = []
   private sessionEnabled = false
@@ -20,6 +20,7 @@ export class MiniMaxProvider implements AIProvider {
   constructor(options?: ProviderOptions) {
     this.apiKey = options?.apiKey || process.env.MINIMAX_API_KEY || ''
     this.model = options?.model || 'MiniMax-M2.5'
+    this.baseUrl = options?.baseURL || 'https://api.minimax.io/v1'
     if (!this.apiKey) {
       throw new Error('MiniMax API key is required. Set MINIMAX_API_KEY env var or pass apiKey in options.')
     }

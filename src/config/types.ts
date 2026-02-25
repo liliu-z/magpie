@@ -1,6 +1,7 @@
 // src/config/types.ts
 export interface ProviderConfig {
   api_key: string
+  base_url?: string
 }
 
 export interface ReviewerConfig {
