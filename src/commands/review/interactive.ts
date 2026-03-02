@@ -19,6 +19,11 @@ export async function selectReviewers(availableIds: string[], rl?: ReturnType<ty
     })
   }
 
+  // Ensure stdin is flowing (ora spinner may have paused it)
+  if (process.stdin.isPaused?.()) {
+    process.stdin.resume()
+  }
+
   console.log(chalk.cyan('\nAvailable reviewers:'))
   console.log(chalk.dim('  [0] All reviewers'))
   availableIds.forEach((id, i) => {
@@ -77,6 +82,8 @@ ${result.finalConclusion}
    Or just type a question to ask all reviewers.${reviewers.map(r => `\n   Available: @${r.id}`).join('')}`))
 
   while (true) {
+    // Ensure stdin is flowing (ora spinner may have paused it)
+    if (process.stdin.isPaused?.()) process.stdin.resume()
     const answer = await new Promise<string>((resolve) => {
       rl.question(chalk.yellow('\n❓ Follow-up (or Enter to end): '), resolve)
     })
@@ -154,6 +161,8 @@ export async function interactivePostReviewDiscussion(
   reviewerSessions: Map<string, ReviewerSessionState>,
   language?: string,
 ): Promise<void> {
+  // Ensure stdin is flowing (ora spinner may have paused it)
+  if (process.stdin.isPaused?.()) process.stdin.resume()
   const enter = await new Promise<string>(resolve => {
     rl.question(chalk.yellow('\n  Enter discussion phase? (y/n): '), resolve)
   })
@@ -350,6 +359,9 @@ export async function interactiveCommentReview(
   console.log(chalk.cyan('\n📝 Post-processing: Review each issue before posting to GitHub'))
   console.log(chalk.dim('   [p] Post as-is  [e] Edit  [d] Discuss with reviewer  [s] Skip  [q] Stop\n'))
 
+  // Ensure stdin is flowing (ora spinner may have paused it)
+  if (process.stdin.isPaused?.()) process.stdin.resume()
+
   // Ask for comment style instructions up front
   const commentStylePrompt = await new Promise<string>(resolve => {
     rl.question(chalk.yellow('  Comment style instructions (or Enter for default): '), resolve)
@@ -537,7 +549,6 @@ export async function interactiveCommentReview(
           discussSpinner.stop()
           // Safety: restore stdin after spinner stop in case discardStdin was active
           if (process.stdin.isPaused?.()) {
-            process.stderr.write(chalk.dim('[debug] stdin paused after spinner, resuming\n'))
             process.stdin.resume()
           }
           console.log(chalk.cyan(`\n  ${targetReviewer.id}:`))
@@ -569,6 +580,7 @@ export async function interactiveCommentReview(
               finalComment += chunk
             }
             genSpinner.stop()
+            if (process.stdin.isPaused?.()) process.stdin.resume()
             console.log(chalk.dim('\n  Generated comment:'))
             console.log(marked(fixMarkdown(finalComment)))
             session.conversationHistory.push({ role: 'assistant', content: finalComment })

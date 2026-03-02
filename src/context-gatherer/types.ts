@@ -86,6 +86,7 @@ export interface RawDoc {
 export interface ContextGathererConfig {
   provider: AIProvider
   options?: GathererOptions
+  language?: string  // Output language (e.g., 'zh', 'en', 'ja')
 }
 
 export interface GathererOptions {

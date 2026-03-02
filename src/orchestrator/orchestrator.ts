@@ -16,6 +16,10 @@ import { parseReviewerOutput, parseFocusAreas } from './issue-parser.js'
 import { formatCallChainForReviewer } from '../context-gatherer/collectors/reference-collector.js'
 import { logger } from '../utils/logger.js'
 
+export class InterruptedError extends Error {
+  constructor() { super('Interrupted by user') }
+}
+
 export class DebateOrchestrator {
   private reviewers: Reviewer[]
   private summarizer: Reviewer
@@ -41,6 +45,13 @@ export class DebateOrchestrator {
     this.analyzer = analyzer
     this.contextGatherer = contextGatherer || null
     this.options = options
+  }
+
+  /** Throw if externally interrupted (e.g., Ctrl+C) */
+  private checkInterrupt(): void {
+    if (this.options.interruptState?.interrupted) {
+      throw new InterruptedError()
+    }
   }
 
   /** Build a language instruction suffix (empty string if no language configured) */
@@ -175,9 +186,11 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
     try {
       // Run pre-analysis first and store it
       this.analysis = await this.preAnalyze(prompt)
+      this.checkInterrupt()
 
       // Run debate rounds
       for (let round = 1; round <= this.options.maxRounds; round++) {
+        this.checkInterrupt()
         for (const reviewer of this.reviewers) {
           // Check for user interruption in interactive mode
           if (this.options.interactive && this.options.onInteractive) {
@@ -226,6 +239,7 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
         }
       }
 
+      this.checkInterrupt()
       // Collect summaries from each reviewer
       const summaries = await this.collectSummaries()
 
@@ -296,6 +310,7 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
       })()
 
       await Promise.all([contextPromise, analysisPromise])
+      this.checkInterrupt()
 
       // Display context after analysis completes (parallel work, sequential display)
       if (this.gatheredContext) {
@@ -347,6 +362,7 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
       }
 
       for (let round = 1; round <= this.options.maxRounds; round++) {
+        this.checkInterrupt()
         // Handle interactive mode before round starts
         if (this.options.interactive && this.options.onInteractive) {
           const userInput = await this.options.onInteractive()
@@ -438,6 +454,7 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
         }
       }
 
+      this.checkInterrupt()
       this.options.onWaiting?.('summarizer')
       const summaries = await this.collectSummaries()
       const finalConclusion = await this.getFinalConclusion(summaries)

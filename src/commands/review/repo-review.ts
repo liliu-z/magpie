@@ -325,11 +325,18 @@ export async function executeFeatureReview(
     systemPrompt: config.summarizer.prompt
   }
 
-  // Setup signal handlers for graceful shutdown
+  // Graceful Ctrl+C handling: first press marks interrupted, second press force-exits
   let interrupted = false
+  let lastSigint = 0
   const cleanup = () => {
+    const now = Date.now()
+    if (interrupted && now - lastSigint < 3000) {
+      console.error('\nForce exit.')
+      process.exit(130)
+    }
     interrupted = true
-    console.log(chalk.yellow('\n\nInterrupted. Saving progress...'))
+    lastSigint = now
+    console.log(chalk.yellow('\n\n⚠ Ctrl+C received. Finishing current step... (press again to force exit)'))
   }
   process.on('SIGINT', cleanup)
   process.on('SIGTERM', cleanup)

@@ -33,9 +33,11 @@ const DEFAULT_OPTIONS: Required<GathererOptions> = {
 export class ContextGatherer {
   private provider: ContextGathererConfig['provider']
   private options: Required<GathererOptions>
+  private language?: string
 
   constructor(config: ContextGathererConfig) {
     this.provider = config.provider
+    this.language = config.language
     this.options = {
       callChain: { ...DEFAULT_OPTIONS.callChain, ...config.options?.callChain },
       history: { ...DEFAULT_OPTIONS.history, ...config.options?.history },
@@ -95,11 +97,12 @@ export class ContextGatherer {
       history,
       relatedPRs,
       docs
-    })
+    }, this.language)
 
+    const langSuffix = this.language ? ` Respond in ${this.language}.` : ''
     const response = await this.provider.chat(
       [{ role: 'user', content: prompt }],
-      'You are a senior software architect. Analyze the PR context and respond in JSON format only.'
+      `You are a senior software architect. Analyze the PR context and respond in JSON format only.${langSuffix}`
     )
 
     // Parse AI response

@@ -60,6 +60,7 @@ export interface OrchestratorOptions {
   // Post-analysis Q&A: return { target: '@reviewer_id', question: 'text' } or null to continue
   onPostAnalysisQA?: () => Promise<{ target: string; question: string } | null>
   onContextGathered?: (context: GatheredContext) => void  // Context gathering complete callback
+  interruptState?: { interrupted: boolean }  // External interrupt signal (e.g., Ctrl+C)
 }
 
 /** Structured issue from a reviewer */

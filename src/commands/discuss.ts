@@ -69,6 +69,9 @@ async function selectReviewers(availableIds: string[], rl?: ReturnType<typeof cr
     rl = createInterface({ input: process.stdin, output: process.stdout })
   }
 
+  // Ensure stdin is flowing (ora spinner may have paused it)
+  if (process.stdin.isPaused?.()) process.stdin.resume()
+
   console.log(chalk.cyan('\nAvailable reviewers:'))
   console.log(chalk.dim('  [0] All reviewers'))
   availableIds.forEach((id, i) => {
@@ -193,7 +196,8 @@ async function runDiscussion(
   selectedIds: string[],
   config: MagpieConfig,
   options: DiscussOptions,
-  spinner: ReturnType<typeof ora>
+  spinner: ReturnType<typeof ora>,
+  interruptState?: { interrupted: boolean }
 ): Promise<{ result: DebateResult }> {
   const reviewers: Reviewer[] = selectedIds.map(id => ({
     id,
@@ -280,6 +284,7 @@ async function runDiscussion(
     maxRounds,
     interactive: !!options.interactive,
     checkConvergence,
+    interruptState,
     onWaiting: (reviewerId) => {
       flushBuffer()
       if (spinnerRef.spinner) spinnerRef.spinner.stop()
@@ -352,6 +357,8 @@ async function runDiscussion(
       currentRound = round + 1
     },
     onInteractive: options.interactive ? async () => {
+      // Ensure stdin is flowing (ora spinner may have paused it)
+      if (process.stdin.isPaused?.()) process.stdin.resume()
       return new Promise((resolve) => {
         rl!.question(chalk.yellow('\nPress Enter to continue, type to interject, or q to end: '), (answer) => {
           resolve(answer || null)
@@ -415,6 +422,21 @@ export const discussCommand = new Command('discuss')
   .action(async (topic: string | undefined, options: DiscussOptions) => {
     const spinner = ora('Loading configuration...').start()
 
+    // Graceful Ctrl+C handling: first press marks interrupted, second press force-exits
+    const interruptState = { interrupted: false }
+    let lastSigint = 0
+    const sigintHandler = () => {
+      const now = Date.now()
+      if (interruptState.interrupted && now - lastSigint < 3000) {
+        console.error('\nForce exit.')
+        process.exit(130)
+      }
+      interruptState.interrupted = true
+      lastSigint = now
+      console.error(chalk.yellow('\n⚠ Ctrl+C received. Finishing current step... (press again to force exit)'))
+    }
+    process.on('SIGINT', sigintHandler)
+
     try {
       const config = loadConfig(options.config)
       spinner.succeed('Configuration loaded')
@@ -432,7 +454,7 @@ export const discussCommand = new Command('discuss')
       if (options.resume) {
         const resumeId = options.resume
         const newTopic = topic ? resolveTopic(topic) : undefined
-        await handleResume(resumeId, newTopic, stateManager, config, options, spinner)
+        await handleResume(resumeId, newTopic, stateManager, config, options, spinner, interruptState)
         return
       }
 
@@ -486,7 +508,7 @@ export const discussCommand = new Command('discuss')
       }
 
       const prompt = buildDiscussPrompt(resolvedTopic)
-      const { result } = await runDiscussion(resolvedTopic, prompt, selectedIds, config, options, spinner)
+      const { result } = await runDiscussion(resolvedTopic, prompt, selectedIds, config, options, spinner, interruptState)
 
       // Save round to session
       const round: DiscussRound = {
@@ -519,16 +541,23 @@ export const discussCommand = new Command('discuss')
 
       // Interactive: ask for follow-up
       if (options.interactive) {
-        await interactiveFollowUp(session, selectedIds, config, options, stateManager, spinner)
+        await interactiveFollowUp(session, selectedIds, config, options, stateManager, spinner, interruptState)
       }
 
       console.log()
     } catch (error) {
+      if ((error as Error)?.constructor?.name === 'InterruptedError') {
+        spinner.stop()
+        console.log(chalk.yellow('\n⚠ Discussion interrupted.'))
+        process.exit(130)
+      }
       spinner.fail('Error')
       if (error instanceof Error) {
         console.error(chalk.red(`Error: ${error.message}`))
       }
       process.exit(1)
+    } finally {
+      process.removeListener('SIGINT', sigintHandler)
     }
   })
 
@@ -538,11 +567,14 @@ async function interactiveFollowUp(
   config: MagpieConfig,
   options: DiscussOptions,
   stateManager: StateManager,
-  spinner: ReturnType<typeof ora>
+  spinner: ReturnType<typeof ora>,
+  interruptState?: { interrupted: boolean }
 ): Promise<void> {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
 
   while (true) {
+    // Ensure stdin is flowing (ora spinner may have paused it)
+    if (process.stdin.isPaused?.()) process.stdin.resume()
     const answer = await new Promise<string>((resolve) => {
       rl.question(chalk.yellow('\nAsk a follow-up question (or Enter to end): '), resolve)
     })
@@ -607,7 +639,8 @@ async function handleResume(
   stateManager: StateManager,
   config: MagpieConfig,
   options: DiscussOptions,
-  spinner: ReturnType<typeof ora>
+  spinner: ReturnType<typeof ora>,
+  interruptState?: { interrupted: boolean }
 ): Promise<void> {
   // Support partial ID match
   const allSessions = await stateManager.listDiscussSessions()
@@ -684,7 +717,7 @@ async function handleResume(
     }
   } else {
     // Interactive mode: ask for follow-up
-    await interactiveFollowUp(session, validIds, config, options, stateManager, spinner)
+    await interactiveFollowUp(session, validIds, config, options, stateManager, spinner, interruptState)
   }
 
   console.log()

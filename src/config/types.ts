@@ -14,6 +14,7 @@ export interface DefaultsConfig {
   output_format: 'markdown' | 'json'
   check_convergence: boolean
   language?: string  // Output language (e.g., 'zh', 'en', 'ja')
+  diff_exclude?: string[]  // Glob patterns for files to exclude from diff (e.g., '*.pb.go', '*generated*')
 }
 
 export interface ContextGathererConfigOptions {

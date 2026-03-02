@@ -15,6 +15,7 @@ import { fixMarkdown, getRandomJoke, formatMarkdown } from './review/utils.js'
 import { selectReviewers, interactiveFollowUpQA, interactiveCommentReview, interactivePostReviewDiscussion } from './review/interactive.js'
 import { handleRepoReview } from './review/repo-review.js'
 import { handleListSessions, handleResumeSession, handleExportSession } from './review/session-cmds.js'
+import { filterDiff } from '../utils/diff-filter.js'
 
 // Configure marked to render for terminal
 marked.setOptions({
@@ -56,9 +57,20 @@ export const reviewCommand = new Command('review')
   .action(async (pr: string | undefined, options) => {
     const spinner = ora('Loading configuration...').start()
 
-    // Graceful Ctrl+C handling (object ref so closures see updates)
+    // Graceful Ctrl+C handling: first press marks interrupted, second press force-exits
     const interruptState = { interrupted: false }
-    const sigintHandler = () => { interruptState.interrupted = true }
+    let lastSigint = 0
+    const sigintHandler = () => {
+      const now = Date.now()
+      if (interruptState.interrupted && now - lastSigint < 3000) {
+        // Second Ctrl+C within 3s → force exit
+        console.error('\nForce exit.')
+        process.exit(130)
+      }
+      interruptState.interrupted = true
+      lastSigint = now
+      console.error(chalk.yellow('\n⚠ Ctrl+C received. Finishing current step... (press again to force exit)'))
+    }
     process.on('SIGINT', sigintHandler)
 
     try {
@@ -106,11 +118,11 @@ export const reviewCommand = new Command('review')
         spinner.text = 'Getting local changes...'
         try {
           // Get both staged and unstaged changes
-          const diff = execSync('git diff HEAD', { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 })
+          const diff = filterDiff(execSync('git diff HEAD', { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }), config.defaults.diff_exclude)
           if (!diff.trim()) {
             // No uncommitted changes, fall back to last commit
             spinner.text = 'No uncommitted changes, getting last commit...'
-            const lastCommitDiff = execSync('git diff HEAD~1 HEAD', { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 })
+            const lastCommitDiff = filterDiff(execSync('git diff HEAD~1 HEAD', { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }), config.defaults.diff_exclude)
             if (!lastCommitDiff.trim()) {
               spinner.fail('No changes found')
               console.error(chalk.yellow('Tip: Make some changes or commits first, then run again.'))
@@ -217,6 +229,12 @@ export const reviewCommand = new Command('review')
         let prBody = ''
         try {
           prDiff = execSync(`gh pr diff ${prUrl}`, { encoding: 'utf-8', timeout: 60000, maxBuffer: 10 * 1024 * 1024 })
+          const originalLines = prDiff.split('\n').length
+          prDiff = filterDiff(prDiff, config.defaults.diff_exclude)
+          const filteredLines = prDiff.split('\n').length
+          if (filteredLines < originalLines) {
+            console.log(chalk.dim(`  Diff filtered: ${originalLines} → ${filteredLines} lines (excluded generated files)`))
+          }
         } catch (e) {
           console.error(chalk.yellow(`Warning: Could not pre-fetch PR diff: ${e instanceof Error ? e.message.slice(0, 100) : e}`))
         }
@@ -316,6 +334,7 @@ export const reviewCommand = new Command('review')
         const contextModel = config.contextGatherer?.model || config.analyzer.model
         contextGatherer = new ContextGatherer({
           provider: createProvider(contextModel, config),
+          language: config.defaults.language,
           options: {
             callChain: config.contextGatherer?.callChain,
             history: config.contextGatherer?.history,
@@ -378,6 +397,7 @@ export const reviewCommand = new Command('review')
         interactive: options.interactive,
         checkConvergence,
         language: config.defaults.language,
+        interruptState,
         onWaiting: (reviewerId) => {
           // Flush previous reviewer's buffer before showing spinner
           flushBuffer()
@@ -476,6 +496,8 @@ export const reviewCommand = new Command('review')
           currentRound = round + 1
         },
         onInteractive: options.interactive ? async () => {
+          // Ensure stdin is flowing (ora spinner may have paused it)
+          if (process.stdin.isPaused?.()) process.stdin.resume()
           return new Promise((resolve) => {
             rl!.question(chalk.yellow('\n💬 Press Enter to continue, type to interject, or q to end: '), (answer) => {
               resolve(answer || null)
@@ -486,6 +508,8 @@ export const reviewCommand = new Command('review')
         onPostAnalysisQA: options.interactive ? async () => {
           // Flush analysis buffer before showing interactive prompt
           flushBuffer()
+          // Ensure stdin is flowing (ora spinner may have paused it)
+          if (process.stdin.isPaused?.()) process.stdin.resume()
           return new Promise((resolve) => {
             console.log(chalk.cyan(`\n💡 You can ask specific reviewers questions before the debate begins.`))
             console.log(chalk.dim(`   Format: @reviewer_id question (e.g., @claude What about security?)${reviewers.map(r => `\n   Available: @${r.id}`).join('')}`))
@@ -630,6 +654,8 @@ export const reviewCommand = new Command('review')
         if (!rl) {
           rl = createInterface({ input: process.stdin, output: process.stdout })
         }
+        // Ensure stdin is flowing (ora spinner may have paused it)
+        if (process.stdin.isPaused?.()) process.stdin.resume()
         const enterPostProcess = await new Promise<string>(resolve => {
           rl!.question(chalk.yellow('\n  Review and post individual comments to GitHub? (y/n): '), resolve)
         })
@@ -679,6 +705,11 @@ export const reviewCommand = new Command('review')
 
       rl?.close()
     } catch (error) {
+      if ((error as Error)?.constructor?.name === 'InterruptedError') {
+        spinner.stop()
+        console.log(chalk.yellow('\n⚠ Review interrupted.'))
+        process.exit(130)
+      }
       spinner.fail('Error')
       if (error instanceof Error) {
         console.error(chalk.red(`Error: ${error.message}`))

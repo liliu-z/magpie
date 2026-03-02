@@ -10,7 +10,7 @@ export interface PromptData {
   docs: RawDoc[]
 }
 
-export function buildAnalysisPrompt(data: PromptData): string {
+export function buildAnalysisPrompt(data: PromptData, language?: string): string {
   const { prDiff, changedFiles, references, history, relatedPRs, docs } = data
 
   // Truncate diff if too long
@@ -86,7 +86,7 @@ Based on the above information, analyze and provide:
    - What the impact and risks are
    - What reviewers should pay attention to
 
-Respond in JSON format:
+${language ? `IMPORTANT: Write all descriptions, summaries, and analysis text in ${language}.\n\n` : ''}Respond in JSON format:
 \`\`\`json
 {
   "affectedModules": [...],
