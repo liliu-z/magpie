@@ -96,21 +96,20 @@ export class DebateOrchestrator {
     // Count how many rounds have been completed
     const roundsCompleted = Math.floor(this.conversationHistory.length / this.reviewers.length)
 
-    // Round 1 is always independent reviews - reviewers haven't seen each other's opinions yet
-    // True convergence requires at least one round of cross-examination
-    if (roundsCompleted < 2) {
-      return false // Need at least 2 rounds for meaningful convergence
-    }
-
     // Get last round's messages
     const lastRoundMessages = this.conversationHistory.slice(-this.reviewers.length)
     const messagesText = lastRoundMessages
       .map(m => `[${m.reviewerId}]: ${m.content}`)
       .join('\n\n---\n\n')
 
+    const isFirstRound = roundsCompleted <= 1
+    const roundContext = isFirstRound
+      ? `IMPORTANT: This is Round 1. Reviewers have NOT seen each other's opinions - they reviewed independently. If they independently arrived at the same conclusions, that IS valid convergence.`
+      : `IMPORTANT: This is Round ${roundsCompleted}. Reviewers have now seen each other's opinions.`
+
     const prompt = `You are a strict consensus judge. Analyze whether these ${this.reviewers.length} reviewers have reached TRUE CONSENSUS.
 
-IMPORTANT: This is Round ${roundsCompleted}. Reviewers have now seen each other's opinions.
+${roundContext}
 
 TRUE CONSENSUS requires ALL of the following:
 1. All reviewers agree on the SAME final verdict (all approve OR all request changes)

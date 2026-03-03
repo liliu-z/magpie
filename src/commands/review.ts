@@ -484,6 +484,15 @@ export const reviewCommand = new Command('review')
           }
         },
         onRoundComplete: (round, converged) => {
+          // Stop any running spinner (e.g., from convergence-check)
+          if (spinnerRef.spinner) {
+            spinnerRef.spinner.stop()
+            spinnerRef.spinner = null
+          }
+          if (spinnerRef.interval) {
+            clearInterval(spinnerRef.interval)
+            spinnerRef.interval = null
+          }
           console.log()
           if (converged) {
             console.log(chalk.yellow(`└─ Verdict: `) + chalk.green.bold(`CONVERGED`))
