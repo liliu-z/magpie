@@ -63,4 +63,26 @@ describe('DebateOrchestrator resilience', () => {
     await expect(orchestrator.runStreaming('test', 'Review this code'))
       .rejects.toThrow('All reviewers failed')
   })
+
+  it('should abort immediately when failFast is enabled and any reviewer fails', async () => {
+    const goodProvider = makeProvider('good', 'LGTM, no issues found.')
+    const badProvider = makeFailingProvider('bad')
+
+    const reviewers = [
+      makeReviewer('good-reviewer', goodProvider),
+      makeReviewer('bad-reviewer', badProvider),
+    ]
+    const summarizer = makeReviewer('summarizer', makeProvider('sum', 'Final conclusion.'))
+    const analyzer = makeReviewer('analyzer', makeProvider('analyzer', 'Analysis done.'))
+
+    const orchestrator = new DebateOrchestrator(reviewers, summarizer, analyzer, {
+      maxRounds: 1,
+      interactive: false,
+      checkConvergence: false,
+      failFast: true,
+    })
+
+    await expect(orchestrator.runStreaming('test', 'Review this code'))
+      .rejects.toThrow(/bad-reviewer.*fail-fast/)
+  })
 })

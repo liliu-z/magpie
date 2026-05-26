@@ -56,6 +56,7 @@ export const reviewCommand = new Command('review')
   .option('--skip-context', 'Skip context gathering phase')
   .option('--no-post', 'Skip post-processing (GitHub comment flow)')
   .option('--no-conclusion', 'Skip final conclusion generation (bot mode)')
+  .option('--fail-fast', 'Abort the entire review immediately if any reviewer (or context gatherer) fails')
   .action(async (pr: string | undefined, options) => {
     const spinner = ora('Loading configuration...').start()
 
@@ -454,6 +455,7 @@ export const reviewCommand = new Command('review')
         language: config.defaults.language,
         interruptState,
         skipConclusion: options.conclusion === false,
+        failFast: !!options.failFast,
         onWaiting: (reviewerId) => {
           // Flush previous reviewer's buffer before showing spinner
           flushBuffer()

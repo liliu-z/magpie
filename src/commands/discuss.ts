@@ -199,6 +199,7 @@ interface DiscussOptions {
   list?: boolean
   resume?: string
   devilAdvocate?: boolean
+  failFast?: boolean
 }
 
 async function runDiscussion(
@@ -302,6 +303,7 @@ async function runDiscussion(
     checkConvergence,
     language: lang,
     interruptState,
+    failFast: !!options.failFast,
     onWaiting: (reviewerId) => {
       flushBuffer()
       if (spinnerRef.spinner) spinnerRef.spinner.stop()
@@ -443,6 +445,7 @@ export const discussCommand = new Command('discuss')
   .option('--reviewers <ids>', 'Comma-separated reviewer IDs')
   .option('-a, --all', 'Use all reviewers')
   .option('-d, --devil-advocate', "Add a Devil's Advocate to challenge consensus")
+  .option('--fail-fast', 'Abort the entire discussion immediately if any reviewer fails')
   .option('--list', 'List all discuss sessions')
   .option('--resume <id>', 'Resume a discuss session')
   .action(async (topic: string | undefined, options: DiscussOptions) => {
