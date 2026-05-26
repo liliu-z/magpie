@@ -585,7 +585,7 @@ NOT_CONVERGED`
       // downstream audit step in li-bot.
       if (parsedIssues.length > 0) {
         this.options.onWaiting?.('verifier')
-        await this.verifyIssues(parsedIssues)
+        parsedIssues = await this.verifyIssues(parsedIssues)
       }
 
       // Legacy: if conclusion was generated and skipConclusion is false,
