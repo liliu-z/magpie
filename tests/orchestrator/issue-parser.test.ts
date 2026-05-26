@@ -102,7 +102,7 @@ describe('deduplicateIssues', () => {
 })
 
 describe('parseFocusAreas', () => {
-  it('should extract focus areas from analysis', () => {
+  it('should extract focus areas from English analysis', () => {
     const analysis = `## What this PR does
 Some analysis here.
 
@@ -114,6 +114,37 @@ Some analysis here.
     const focus = parseFocusAreas(analysis)
     expect(focus).toHaveLength(3)
     expect(focus[0]).toContain('Security')
+    expect(focus[1]).toContain('Performance')
+    expect(focus[2]).toContain('Error handling')
+  })
+
+  it('should extract focus areas from Chinese analysis', () => {
+    const analysis = `## 这个 PR 做了什么
+一些分析内容。
+
+## 建议的 review 重点
+- 安全性：登录处理函数的输入校验
+- 性能：新增的数据库查询
+- 错误处理：异步路径缺少 try/catch`
+
+    const focus = parseFocusAreas(analysis)
+    expect(focus).toHaveLength(3)
+    expect(focus[0]).toContain('安全性')
+    expect(focus[1]).toContain('性能')
+    expect(focus[2]).toContain('错误处理')
+  })
+
+  it('should support bold-heading variant with Chinese title', () => {
+    const analysis = `**建议的 review 重点**
+1. src/auth.ts 的鉴权改动
+2. 新增的并发逻辑
+
+其他段落...`
+
+    const focus = parseFocusAreas(analysis)
+    expect(focus).toHaveLength(2)
+    expect(focus[0]).toContain('src/auth.ts')
+    expect(focus[1]).toContain('并发')
   })
 
   it('should return empty array if no focus section', () => {

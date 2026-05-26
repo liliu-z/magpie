@@ -49,5 +49,6 @@ export interface MagpieConfig {
   reviewers: Record<string, ReviewerConfig>
   summarizer: ReviewerConfig
   analyzer: ReviewerConfig
+  audit?: ReviewerConfig  // Omniscient final judge; falls back to summarizer if absent
   contextGatherer?: ContextGathererConfigOptions
 }

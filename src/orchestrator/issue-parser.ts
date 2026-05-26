@@ -105,16 +105,44 @@ export function deduplicateIssues(
 
 /**
  * Extract suggested review focus areas from analyzer output.
- * Looks for a "## Suggested Review Focus" section with bullet points.
+ * Matches the focus section heading in several flavors:
+ *   - "## Suggested Review Focus" (English heading)
+ *   - "## 建议的 review 重点" (Chinese heading with space)
+ *   - "## 建议的review重点" (Chinese heading no space)
+ *   - "**建议的 review 重点**" (bold variant)
+ *   - "**Suggested Review Focus**" (English bold variant)
+ * Reads until the next heading (##, **bold heading**) or end of section.
  */
 export function parseFocusAreas(analysis: string): string[] {
-  const match = analysis.match(/## Suggested Review Focus\s*\n([\s\S]*?)(?=\n##|\n*$)/)
+  // Heading pattern: either a markdown heading (##) or a standalone bold line (**...**)
+  // Title text matches Chinese or English variants.
+  const titlePattern = '(?:Suggested\\s+Review\\s+Focus|建议的\\s*review\\s*重点)'
+  // Optional leading numbering like "6.", "6、", "6）" before the title (analyzer may inline-number sections).
+  const numberPrefix = '(?:\\d+[\\.、\\)）]\\s*)?'
+  const headingRegex = new RegExp(
+    // Either: line starting with ## (optional number prefix), then title (optionally wrapped in **)
+    // Or: a standalone bold line **title** (with optional number prefix inside)
+    `(?:^|\\n)(?:#{1,6}\\s*${numberPrefix}\\*{0,2}${titlePattern}\\*{0,2}|\\*\\*${numberPrefix}${titlePattern}\\*\\*)[^\\n]*\\n([\\s\\S]*?)(?=\\n#{1,6}\\s|\\n\\*\\*[^\\n*]+\\*\\*\\s*\\n|$)`,
+    'i'
+  )
+  const match = analysis.match(headingRegex)
   if (!match) return []
 
-  const lines = match[1].trim().split('\n')
-  return lines
-    .map(line => line.replace(/^[-*]\s*/, '').trim())
-    .filter(line => line.length > 0)
+  const body = match[1].trim()
+  if (!body) return []
+
+  // Pull out lines that look like bulleted items.
+  // Supported markers: "-", "*", "1.", "1)", "1、", "①", "•", and Chinese full-width number variants.
+  const bulletRegex = /^\s*(?:[-*•·]|[①-⑳]|[\d]+[\.、\)）])\s+/u
+  const lines = body.split('\n')
+  const items: string[] = []
+  for (const raw of lines) {
+    if (!bulletRegex.test(raw)) continue
+    const stripped = raw.replace(bulletRegex, '').trim()
+    if (stripped.length === 0) continue
+    items.push(stripped)
+  }
+  return items
 }
 
 const STOP_WORDS = new Set(['the', 'a', 'in', 'of', 'is', 'to', 'and', 'for', 'with', 'this', 'that', 'it'])

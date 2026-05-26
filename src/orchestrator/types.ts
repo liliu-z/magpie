@@ -85,4 +85,10 @@ export interface ReviewerOutput {
 export interface MergedIssue extends ReviewIssue {
   raisedBy: string[]       // reviewer IDs who found this issue
   descriptions: string[]   // each reviewer's description
+
+  // Populated by the audit stage (verifyIssues). Absent if audit didn't run.
+  verdict?: 'keep' | 'rewrite' | 'drop' | 'new'
+  body?: string            // Audit-authored post text (replaces description for posting). Plain prose.
+  evidence?: string        // Audit's cited code reference (file:line + quote)
+  auditReason?: string     // For verdict=drop: drop reason category
 }

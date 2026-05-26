@@ -382,6 +382,16 @@ export const reviewCommand = new Command('review')
         systemPrompt: config.analyzer.prompt
       }
 
+      // Create auditor (final judge). Uses config.audit if present; else falls back
+      // to summarizer (caller side just passes undefined so the orchestrator default kicks in).
+      const auditor: Reviewer | undefined = config.audit
+        ? {
+            id: 'auditor',
+            provider: createProvider(config.audit.model, config),
+            systemPrompt: config.audit.prompt
+          }
+        : undefined
+
       // Create context gatherer (if enabled)
       let contextGatherer: ContextGatherer | undefined
       const contextEnabled = !options.skipContext && (config.contextGatherer?.enabled !== false)
@@ -629,7 +639,7 @@ export const reviewCommand = new Command('review')
             console.log(marked(fixMarkdown(context.summary)))
           }
         }
-      }, contextGatherer)
+      }, contextGatherer, auditor)
 
       const result = await orchestrator.runStreaming(target.label, target.prompt)
 

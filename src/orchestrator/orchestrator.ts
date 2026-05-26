@@ -79,16 +79,20 @@ export class DebateOrchestrator {
   private taskPrompt: string = ''  // Original task prompt (contains PR number, etc.)
   private lastSeenIndex: Map<string, number> = new Map()  // Track what each reviewer has seen
 
+  private auditor: Reviewer  // Final judge. Falls back to summarizer if not configured.
+
   constructor(
     reviewers: Reviewer[],
     summarizer: Reviewer,
     analyzer: Reviewer,
     options: OrchestratorOptions,
-    contextGatherer?: ContextGatherer
+    contextGatherer?: ContextGatherer,
+    auditor?: Reviewer
   ) {
     this.reviewers = reviewers
     this.summarizer = summarizer
     this.analyzer = analyzer
+    this.auditor = auditor || summarizer
     this.contextGatherer = contextGatherer || null
     this.options = options
   }
@@ -187,7 +191,14 @@ Reviews from Round ${roundsCompleted}:
 ${messagesText}
 
 First, provide a brief reasoning (2-3 sentences) explaining your judgment.
-Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED`
+
+Output your verdict on the LAST LINE with EXACTLY this format (no punctuation, no extra words):
+
+CONVERGED
+
+or
+
+NOT_CONVERGED`
 
     const messages: Message[] = [{ role: 'user', content: prompt }]
     const response = await this.summarizer.provider.chat(
@@ -197,8 +208,10 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
 
     // Parse response - extract verdict from last line, rest is reasoning
     const lines = response.trim().split('\n')
-    const lastLine = lines[lines.length - 1].trim().toUpperCase()
-    const verdict = lastLine.split(/\s+/)[0]
+    const lastLine = lines[lines.length - 1].trim()
+    // Strip all non-letter characters and uppercase to match verdict robustly:
+    // "CONVERGED.", "Verdict: converged", "**CONVERGED**" all work.
+    const verdict = lastLine.replace(/[^A-Za-z_]/g, '').toUpperCase()
     const isConverged = verdict === 'CONVERGED'
 
     // Extract reasoning (everything except the last line)
@@ -307,10 +320,10 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
 
       // End summarizer session for clean JSON extraction call
       this.summarizer.provider.endSession?.()
-      const parsedIssues = await this.extractIssues()
+      let parsedIssues = await this.extractIssues()
 
       if (parsedIssues.length > 0) {
-        await this.verifyIssues(parsedIssues)
+        parsedIssues = await this.verifyIssues(parsedIssues)
       }
 
       if (finalConclusion && !this.options.skipConclusion) {
@@ -565,7 +578,7 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
       // non-session call. The session context (convergence + conclusion) would
       // pollute the JSON extraction and --resume ignores custom system prompts.
       this.summarizer.provider.endSession?.()
-      const parsedIssues = await this.extractIssues()
+      let parsedIssues = await this.extractIssues()
 
       // Verify+Audit: check each issue against actual code using tools.
       // This replaces both the old text-only verifyConclusion and the
@@ -641,9 +654,32 @@ ${contextSection}${focusSection}${callChainSection}Here is the analysis:
 
 ${this.analysis}
 
-You are [${currentReviewerId}]. Review EVERY changed file and EVERY changed function/block — do not skip any.
-For each change, check: correctness, security, performance, error handling, edge cases, maintainability.
-If you reviewed a file and found no issues, say so briefly. Do not stop early.${this.langSuffix}`
+You are [${currentReviewerId}]. Review the PR systematically.
+
+For every issue you raise, you MUST include:
+1. The specific \`file:line\` — only lines inside diff hunks (lines outside hunks are wasted, GitHub can't anchor them)
+2. A quote of the offending code (1-3 lines max)
+3. The concrete failure scenario — what input or state triggers it, what happens, what the user/system experiences as a result
+4. A self-assessed severity (use these definitions exactly):
+   - critical = data corruption, security hole, guaranteed crash on common input
+   - high     = will trigger under realistic conditions, observable user-facing breakage
+   - medium   = edge case with plausible trigger, missing error handling
+   - low      = code quality, minor concern
+   - nitpick  = style-only preference (won't be posted)
+
+DO NOT REPORT:
+- Build script / CI polish (LD_PATH ordering, include order, dead asserts in build helpers, etc.)
+- Missing comments / docstrings unless load-bearing for correctness
+- "Forward-compat risk" / "if someone later adds X" without a concrete trigger
+- Dead code unless it carries real risk
+- Style preferences (naming, formatting, brace style)
+- Issues outside the diff hunk unless severity >= high
+- Theoretically-correct-but-impossible cases (e.g., int64 * byte_width overflow on 64-bit systems)
+
+If a file has nothing meaningful wrong, skip it. Do NOT produce filler.
+Brevity is a feature — 5 well-evidenced issues > 20 weak ones.
+
+Use \`gh pr diff\` and Read/Grep to verify your claims before reporting.${this.langSuffix}`
 
       return [{ role: 'user', content: prompt }]
     }
@@ -686,21 +722,20 @@ If you reviewed a file and found no issues, say so briefly. Do not stop early.${
 
       return [{
         role: 'user',
-        content: `You are [${currentReviewerId}]. Here's what others said in the previous round:\n\n${newContent}\n\nDo three things:\n1. Continue your own exhaustive review — are there changed files or functions you haven't covered yet? Cover them now.\n2. Point out what the other reviewers MISSED — which files or changes did they skip or gloss over?\n3. Respond to their points — agree where valid, challenge where you disagree.${this.langSuffix}`
+        content: `You are [${currentReviewerId}]. Here's what others said in the previous round:\n\n${newContent}\n\nDo this:\n1. If the others' findings are correct and you have nothing substantive to add, say "I agree with [reviewer]'s findings, no additional issues." That is a fine outcome — do not pad.\n2. If you disagree with any of their claims, challenge with code evidence — quote the line that disproves their concern.\n3. ONLY add new issues if they are concrete (file:line + code quote + failure scenario) AND genuinely missed by the others. Do not manufacture issues to look productive — padding hurts review quality.${this.langSuffix}`
       }]
     }
 
     // Non-session mode: full context with all previous rounds
     const debateContext = `You are [${currentReviewerId}] in a code review debate with [${otherReviewerIds.join('], [')}].
-Your shared goal: find ALL real issues in the code — leave nothing uncovered.
+Your shared goal: converge on the real issues — quality over quantity.
 
 IMPORTANT:
 - You are [${currentReviewerId}], the other reviewer${otherReviewerIds.length > 1 ? 's are' : ' is'} [${otherReviewerIds.join('], [')}]
-- Continue your own exhaustive review — cover any changed files or functions you haven't addressed yet
-- Point out what others MISSED — which files or changes did they skip or gloss over?
-- Challenge weak arguments - don't agree just to be polite
-- Acknowledge good points and build on them
-- If you disagree, explain why with evidence`
+- If the others' findings are correct and you have nothing substantive to add, say "I agree with [reviewer]'s findings, no additional issues." That is a fine outcome — do not pad.
+- If you disagree with any claim, challenge with code evidence — quote the line that disproves the concern.
+- ONLY add new issues if they are concrete (file:line + code quote + failure scenario) AND genuinely missed by the others. Do not manufacture issues to look productive — padding hurts review quality.
+- Acknowledge good points and build on them.`
 
     let prompt = `Task: ${this.taskPrompt}
 
@@ -816,17 +851,18 @@ Output ONLY a JSON block (no other text):
 
 Rules:
 - Include every issue mentioned by any reviewer
-- The "description" field will be posted directly as a GitHub PR inline comment. Keep it concise: (1) What the problem is, (2) Concrete impact or risk, (3) Fix suggestion if non-obvious. Reference line numbers instead of quoting large code blocks.
+- "description" field — write this as if you were a senior engineer leaving an inline PR comment. Must capture: (1) WHAT — the problem with a brief code quote (1-3 lines) anchored at line, (2) WHY — what makes this a bug / what assumption is broken / what invariant is violated (this is critical — audit will judge against this), (3) FAILURE — concrete scenario that triggers it and what the user/system experiences, (4) FIX — suggested fix if non-obvious. 1-3 sentences total, no boilerplate headers, no severity labels, no "raised by [X]" metadata. Plain prose only.
 - "category" MUST be one of the 12 values listed above. Choose the closest match, do not invent new categories.
 - If multiple reviewers mention the same issue, list all their IDs in raisedBy
 - Use the exact reviewer IDs: ${reviewerIds}
-- If a file path or line number is mentioned, include it; otherwise omit the field
-- Severity (STRICT — when in doubt, choose LOWER):
-  critical = compilation failure, data corruption, exploitable security hole, guaranteed crash
-  high = logic error that WILL trigger, resource leak, real concurrency bug
-  medium = edge case, missing error handling, compatibility risk
-  low = code quality, minor concern
-  nitpick = style only${changedFilesConstraint}${this.options.language ? `\n- Write the "title", "description", and "suggestedFix" fields in ${this.options.language}. Keep JSON keys and severity/category values in English.` : ''}`
+- "line" field: REQUIRED for every issue. If the reviewer's text doesn't pin a specific line but anchors to a function or block, look at the diff hunk and pick the most representative line yourself. If you genuinely cannot anchor an issue to any line in the diff hunk, DROP that issue (don't emit it). Issues without lines cannot be posted as inline comments and waste reader attention.
+- Severity — use the rubric exactly. Do NOT bias systematically low or high:
+  critical = data corruption, security hole, guaranteed crash on common input
+  high     = will trigger under realistic conditions, observable user-facing breakage
+  medium   = edge case with plausible trigger, missing error handling
+  low      = code quality, minor concern
+  nitpick  = style-only preference
+  If the reviewer's reasoning supports a higher severity, use the higher one.${changedFilesConstraint}${this.options.language ? `\n- Write the "title", "description", and "suggestedFix" fields in ${this.options.language}. Keep JSON keys and severity/category values in English.` : ''}`
 
     const systemPrompt = 'You extract structured issues from code review text. Output only valid JSON.'
     const chatOpts = { disableTools: true }
@@ -938,80 +974,178 @@ Then provide your **Verified Final Conclusion** that:
   }
 
   /**
-   * Verify+Audit: check each structured issue against actual code using tools.
-   * Mutates the parsedIssues array in-place: adjusts severity based on verification.
-   * This replaces the downstream audit step that was previously in li-bot.
+   * Audit (omniscient final judge): for every reviewer-flagged issue, verify against
+   * actual code (Read/Grep/Glob + `gh pr diff`); rewrite weak descriptions; drop false
+   * positives; add issues reviewers missed (especially cross-file pattern repetition).
+   * Returns the post-audit issue list.
    */
-  private async verifyIssues(issues: MergedIssue[]): Promise<void> {
-    const issuesText = issues.map((iss, i) => {
-      const loc = iss.line ? `${iss.file}:${iss.line}` : iss.file
-      const agreement = iss.raisedBy.length >= 2
-        ? `[raised by BOTH: ${iss.raisedBy.join(', ')}]`
-        : `[raised by: ${iss.raisedBy.join(', ')} only]`
-      return `### Issue ${i} [${iss.severity}] ${agreement}\nLocation: ${loc}\nTitle: ${iss.title}\nDescription: ${iss.description}`
-    }).join('\n\n')
+  private async verifyIssues(issues: MergedIssue[]): Promise<MergedIssue[]> {
+    const issuesText = issues.map((iss, i) =>
+      `### Issue ${i} [severity: ${iss.severity}] [category: ${iss.category}]\nfile: ${iss.file}${iss.line ? `:${iss.line}` : ''}\ntitle: ${iss.title}\ndescription: ${iss.description}${iss.suggestedFix ? `\nsuggestedFix: ${iss.suggestedFix}` : ''}`
+    ).join('\n\n')
 
-    const prompt = `You are a strict code review auditor. You have access to the full repository via Read/Grep/Glob tools.
+    // Optional repo-specific conventions file (bot may stage this in the worktree).
+    let houseRules = ''
+    try {
+      const { readFileSync, existsSync } = await import('fs')
+      if (existsSync('.magpie-house-rules.md')) {
+        houseRules = readFileSync('.magpie-house-rules.md', 'utf-8').trim()
+      }
+    } catch { /* no house rules — that's fine */ }
 
-For EACH issue below:
-1. Use Read/Grep/Glob to check the actual code and verify the claim is accurate
-2. Check if the issue is truly introduced by this PR, or pre-existing
-3. Check if the pattern is intentional/by-design (grep for similar patterns in the codebase)
-4. Re-score the severity using these strict definitions:
-   - critical: Compilation failure, data corruption, exploitable security hole, guaranteed crash
-   - high: Logic error that WILL trigger under realistic conditions, resource leak, real concurrency bug
-   - medium: Edge case that COULD trigger, missing error handling, compatibility risk
-   - low: Code quality, minor concern, pre-existing issue
-   - nitpick: Style only, or false positive (issue does not actually exist)
+    const prompt = `${this.taskPrompt}
 
-Agreement signal: Issues raised by BOTH reviewers have higher prior probability of being real.
-Issues raised by only ONE reviewer should be scrutinized more carefully.
+You have access to Read, Grep, Glob, and Bash. Run \`gh pr diff\` (the URL is in the task above) to see the actual changes, then Read the touched files. **Read the code before judging — never guess.**
 
-Output ONLY a JSON block:
+## Issues raised by reviewers
+
+${issuesText}
+${houseRules ? `\n## Repository conventions (MUST respect — these override reviewer claims)\n\n${houseRules}\n` : ''}
+## Your job
+
+### Task 1: Verify each issue above
+
+For every numbered issue, decide a verdict:
+
+- **keep** — issue is real and the description is fine as-is. You may adjust severity.
+- **rewrite** — issue is real but the description is weak (machine-sounding, missing evidence, vague, or includes decoration). Write a clean replacement.
+- **drop** — false positive. Must give a \`reason\` (one of):
+  * \`codebase-convention\` — violates repo idiom (e.g. AssertInfo throws, doesn't abort; assert in writer_c.cpp is invariant not input validation)
+  * \`pre-existing\` — not introduced by this PR and unrelated to PR touch
+  * \`theoretically-correct-but-impossible\` — true in theory but real-world impossible (e.g. int64*byte_width overflow on 64-bit)
+  * \`style-out-of-scope\` — pure style, PR doesn't touch that concern
+  * \`false-claim\` — reviewer misread the code
+
+For every keep/rewrite you MUST include \`evidence\` quoting the actual code you Read (file:line + the line itself).
+
+### Task 2: Find issues reviewers MISSED
+
+After verifying, scan the diff yourself:
+
+a) **Coverage** — did reviewers skip files or functions in the diff? Read what they didn't.
+b) **Cross-file pattern repetition** — for every kept/rewritten issue, grep the entire diff for the same pattern in other files. New occurrence = new issue.
+c) **Architecture** — does this fix break an abstraction, introduce coupling, violate a pattern visible elsewhere?
+d) **Orthogonal interactions** — grep callers/consumers of touched interfaces; flag any module that should be updated together.
+
+New issues use \`verdict: "new"\`. Same evidence rules apply.
+
+## Output JSON (only this — no narrative, no preamble)
+
 \`\`\`json
 {
-  "verified": [
-    {"index": 0, "severity": "high", "reason": "Verified: null deref confirmed at line 42"},
-    {"index": 1, "severity": "nitpick", "reason": "False positive: caller already validates input at line 30"}
+  "verifiedIssues": [
+    {
+      "verdict": "keep" | "rewrite" | "drop" | "new",
+      "originalIndex": 0,
+      "file": "internal/...",
+      "line": 42,
+      "severity": "critical" | "high" | "medium" | "low" | "nitpick",
+      "category": "correctness",
+      "body": "Plain prose, 1-3 sentences.",
+      "evidence": "at file.cpp:118 saw \`if (!p) goto cleanup\` — confirms ...",
+      "reason": "codebase-convention"
+    }
   ]
 }
 \`\`\`
 
-All issues must appear in the "verified" array. Index corresponds to the issue number above.
+## Hard rules
 
-Issues to verify:
-
-${issuesText}${this.langSuffix}`
+- For verdict=keep/rewrite/drop: \`originalIndex\` is REQUIRED (references the issue number above).
+- For verdict=keep/rewrite/new: \`file\` + \`line\` + \`severity\` + \`category\` + \`body\` + \`evidence\` are REQUIRED. \`line\` MUST be inside a diff hunk — run \`gh pr diff\` and verify.
+- For verdict=drop: \`reason\` is REQUIRED. Other fields ignored.
+- For verdict=keep: \`body\` may be omitted (signals "original description is fine"). If you set it, that replaces the original.
+- \`body\` must be plain prose. NO emoji decorations, NO \`[meta]\` tags, NO "Severity: X" labels, NO "raised by Y" suffix. Write like a senior engineer leaves an inline comment.
+- No evidence = no issue. Don't ship anything you didn't verify with code reads.
+- If repository conventions above conflict with a reviewer claim, conventions win.
+- Every issue must appear in \`verifiedIssues\` (every keep/rewrite/drop + any new).${this.langSuffix}`
 
     const messages: Message[] = [{ role: 'user', content: prompt }]
-    const systemPrompt = this.withLang(
-      'You are a strict code review auditor. Use Read/Grep/Glob tools to verify each issue against the actual code. Be precise — check the real code, do not guess.'
-    )
+    const systemPrompt = this.withLang(this.auditor.systemPrompt)
 
     try {
-      const response = await this.summarizer.provider.chat(messages, systemPrompt)
+      const response = await this.auditor.provider.chat(messages, systemPrompt)
       this.trackTokens('verifier', prompt + (systemPrompt || ''), response)
 
-      // Parse the verification result
+      // Parse the audit result
       const jsonMatch = response.match(/```json\s*([\s\S]*?)\s*```/)
       const jsonStr = jsonMatch?.[1] || response
-      const match = jsonStr.match(/\{[\s\S]*"verified"\s*:\s*\[[\s\S]*?\]\s*\}/)
-      if (match) {
-        const parsed = JSON.parse(match[0])
-        if (Array.isArray(parsed.verified)) {
-          // Apply verified severities back to issues
-          for (const v of parsed.verified) {
-            const idx = v.index
-            if (idx >= 0 && idx < issues.length && typeof v.severity === 'string') {
-              issues[idx].severity = v.severity as MergedIssue['severity']
-            }
-          }
-          logger.info(`Verified ${parsed.verified.length} issues`)
-        }
+      const match = jsonStr.match(/\{[\s\S]*"verifiedIssues"\s*:\s*\[[\s\S]*?\]\s*\}/)
+      if (!match) {
+        logger.warn('Audit returned unparseable output; keeping original issues')
+        return issues
       }
+
+      const parsed = JSON.parse(match[0])
+      if (!Array.isArray(parsed.verifiedIssues)) {
+        logger.warn('Audit verifiedIssues field is not an array; keeping originals')
+        return issues
+      }
+
+      type V = {
+        verdict: 'keep' | 'rewrite' | 'drop' | 'new'
+        originalIndex?: number
+        file?: string
+        line?: number
+        severity?: MergedIssue['severity']
+        category?: string
+        body?: string
+        evidence?: string
+        reason?: string
+      }
+
+      const result: MergedIssue[] = []
+      const droppedOrigIdx = new Set<number>()
+      let dropCount = 0, rewriteCount = 0, newCount = 0
+
+      for (const v of parsed.verifiedIssues as V[]) {
+        if (v.verdict === 'drop') {
+          if (typeof v.originalIndex === 'number') droppedOrigIdx.add(v.originalIndex)
+          dropCount++
+          continue
+        }
+        if (v.verdict === 'new') {
+          if (!v.file || typeof v.line !== 'number' || !v.body || !v.evidence) continue
+          result.push({
+            severity: (v.severity || 'low'),
+            category: v.category || 'general',
+            file: v.file,
+            line: v.line,
+            title: v.body.split(/[.!?\n]/)[0].slice(0, 100),
+            description: v.body,
+            raisedBy: ['auditor'],
+            descriptions: [v.body],
+            verdict: 'new',
+            body: v.body,
+            evidence: v.evidence
+          })
+          newCount++
+          continue
+        }
+        // keep or rewrite
+        if (typeof v.originalIndex !== 'number' || v.originalIndex < 0 || v.originalIndex >= issues.length) {
+          continue
+        }
+        const orig = issues[v.originalIndex]
+        if (droppedOrigIdx.has(v.originalIndex)) continue  // already dropped, skip duplicate
+        const merged: MergedIssue = {
+          ...orig,
+          severity: v.severity || orig.severity,
+          file: v.file || orig.file,
+          line: typeof v.line === 'number' ? v.line : orig.line,
+          verdict: v.verdict,
+          body: v.body,  // undefined for keep-no-change is fine
+          evidence: v.evidence
+        }
+        if (v.verdict === 'rewrite') rewriteCount++
+        result.push(merged)
+      }
+
+      logger.info(`Audit: ${result.length - newCount} kept/rewritten (${rewriteCount} rewrites), ${dropCount} dropped, ${newCount} new`)
+      return result
     } catch (err) {
-      // Verification failure is non-fatal — keep original severities
-      logger.warn('Issue verification failed, keeping original severities:', err)
+      logger.warn('Audit failed; returning original issues:', err)
+      return issues
     }
   }
 }

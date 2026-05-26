@@ -83,6 +83,10 @@ function validateConfig(config: MagpieConfig): void {
   }
   validateReviewerConfig('analyzer', config.analyzer)
 
+  if (config.audit) {
+    validateReviewerConfig('audit', config.audit)
+  }
+
   // Warn (don't throw) if API keys look empty — CLI providers don't need them
   if (!config.providers) return
   for (const [name, prov] of Object.entries(config.providers)) {
