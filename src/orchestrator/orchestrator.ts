@@ -352,6 +352,9 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
               const diff = this.extractDiffFromPrompt(prompt)
               this.gatheredContext = await this.contextGatherer!.gather(diff, label, 'main')
             } catch (error) {
+              if (this.options.failFast) {
+                throw new Error(`Context gathering failed (fail-fast): ${error instanceof Error ? error.message : String(error)}`)
+              }
               logger.warn('Context gathering failed:', error)
             }
           })()
@@ -489,6 +492,10 @@ Then on the LAST line, respond with EXACTLY one word: CONVERGED or NOT_CONVERGED
                 duration: (endTime - startTime) / 1000
               }
               this.options.onParallelStatus?.(round, statuses)
+              if (this.options.failFast) {
+                // Re-throw so Promise.all rejects immediately and aborts the whole flow
+                throw new Error(`Reviewer ${reviewer.id} failed in round ${round} (fail-fast): ${err instanceof Error ? err.message : String(err)}`)
+              }
               logger.warn(`Reviewer ${reviewer.id} failed in round ${round}:`, err)
               return { reviewer, fullResponse: '', inputText: '', failed: true as const, error: err }
             }

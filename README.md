@@ -177,6 +177,7 @@ Options:
   --git-remote <remote>     Git remote for PR URL detection (default: origin)
   --skip-context            Skip context gathering phase
   --no-post                 Skip post-processing (GitHub comment flow)
+  --fail-fast               Abort the entire review immediately if any reviewer fails
   --plan-only               Generate review plan without executing
   --reanalyze               Force re-analyze features (ignore cache)
 
@@ -206,6 +207,7 @@ Options:
   --reviewers <ids>         Comma-separated reviewer IDs
   -a, --all                 Use all configured reviewers
   -d, --devil-advocate      Add a Devil's Advocate to challenge consensus
+  --fail-fast               Abort the entire discussion immediately if any reviewer fails
   --list                    List all discuss sessions
   --resume <id>             Resume a discuss session with follow-up question
 ```
@@ -435,6 +437,20 @@ magpie review 12345 --no-converge
 ```
 
 Set `defaults.check_convergence: false` in config to disable by default.
+
+### Failure Handling
+
+By default, Magpie is **resilient**: if a single reviewer fails (network error, rate limit, model unavailable), the round continues with the surviving reviewers and only aborts if *all* reviewers fail. The failed reviewer's slot shows `[Review failed: ...]` and is excluded from subsequent rounds.
+
+Use `--fail-fast` to flip to strict mode — any single reviewer failure (or context-gathering failure) immediately terminates the entire flow with an error:
+
+```bash
+# Strict mode: abort the moment anything fails
+magpie review 12345 --fail-fast
+magpie discuss "Should we use microservices?" --fail-fast
+```
+
+Useful when you want to guarantee every configured reviewer participated, or when you're debugging provider/auth issues and don't want failures swallowed.
 
 ### Markdown Rendering
 

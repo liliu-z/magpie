@@ -55,6 +55,7 @@ export const reviewCommand = new Command('review')
   .option('--export <file>', 'Export completed review to markdown')
   .option('--skip-context', 'Skip context gathering phase')
   .option('--no-post', 'Skip post-processing (GitHub comment flow)')
+  .option('--fail-fast', 'Abort the entire review immediately if any reviewer (or context gatherer) fails')
   .action(async (pr: string | undefined, options) => {
     const spinner = ora('Loading configuration...').start()
 
@@ -433,6 +434,7 @@ export const reviewCommand = new Command('review')
         checkConvergence,
         language: config.defaults.language,
         interruptState,
+        failFast: !!options.failFast,
         onWaiting: (reviewerId) => {
           // Flush previous reviewer's buffer before showing spinner
           flushBuffer()

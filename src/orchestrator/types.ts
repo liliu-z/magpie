@@ -56,6 +56,7 @@ export interface OrchestratorOptions {
   onPostAnalysisQA?: () => Promise<{ target: string; question: string } | null>
   onContextGathered?: (context: GatheredContext) => void  // Context gathering complete callback
   interruptState?: { interrupted: boolean }  // External interrupt signal (e.g., Ctrl+C)
+  failFast?: boolean  // Abort the entire flow as soon as any reviewer (or context gatherer) fails
 }
 
 /** Structured issue from a reviewer */
