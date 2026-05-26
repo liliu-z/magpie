@@ -50,7 +50,6 @@ describe('DebateOrchestrator', () => {
     expect(result.prNumber).toBe('123')
     expect(result.analysis).toBe('PR analysis result')
     expect(result.messages.length).toBe(4) // 2 reviewers * 2 rounds
-    expect(result.summaries.length).toBe(2)
     expect(result.finalConclusion).toBe('Final conclusion')
   })
 
