@@ -984,12 +984,22 @@ Then provide your **Verified Final Conclusion** that:
       `### Issue ${i} [severity: ${iss.severity}] [category: ${iss.category}]\nfile: ${iss.file}${iss.line ? `:${iss.line}` : ''}\ntitle: ${iss.title}\ndescription: ${iss.description}${iss.suggestedFix ? `\nsuggestedFix: ${iss.suggestedFix}` : ''}`
     ).join('\n\n')
 
-    // Optional repo-specific conventions file (bot may stage this in the worktree).
+    // Optional repo-specific conventions file at ~/.magpie/house-rules/<owner>_<repo>.md.
+    // Parse owner/repo from the PR URL embedded in taskPrompt.
     let houseRules = ''
     try {
       const { readFileSync, existsSync } = await import('fs')
-      if (existsSync('.magpie-house-rules.md')) {
-        houseRules = readFileSync('.magpie-house-rules.md', 'utf-8').trim()
+      const { join } = await import('path')
+      const { homedir } = await import('os')
+      const repoMatch = this.taskPrompt.match(/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\//)
+      if (repoMatch) {
+        const owner = repoMatch[1]
+        const repo = repoMatch[2]
+        const hrPath = join(homedir(), '.magpie', 'house-rules', `${owner}_${repo}.md`)
+        if (existsSync(hrPath)) {
+          houseRules = readFileSync(hrPath, 'utf-8').trim()
+          logger.info(`Audit using house-rules from ${hrPath}`)
+        }
       }
     } catch { /* no house rules — that's fine */ }
 
