@@ -75,7 +75,7 @@ export class ClaudeCodeProvider implements AIProvider {
     return new Promise((resolve, reject) => {
       // Build args based on session state
       // Use --dangerously-skip-permissions to allow network access (e.g., gh commands)
-      const args = ['-p', '-', '--dangerously-skip-permissions']
+      const args = ['-p', '-', '--dangerously-skip-permissions', '--effort', 'max']
       if (this.cliModel) {
         args.push('--model', this.cliModel)
       }
@@ -142,7 +142,7 @@ export class ClaudeCodeProvider implements AIProvider {
     // Use --output-format stream-json --verbose so that tool activity (Read, Bash, etc.)
     // produces stdout events, preventing the inactivity timeout from killing Claude
     // while it's actively investigating code.
-    const args = ['-p', '-', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose']
+    const args = ['-p', '-', '--dangerously-skip-permissions', '--effort', 'max', '--output-format', 'stream-json', '--verbose']
     if (this.cliModel) {
       args.push('--model', this.cliModel)
     }
