@@ -6,6 +6,7 @@ import { homedir } from 'os'
 const PROVIDER_CONTEXT_MAP: Record<string, string[]> = {
   'claude-code': ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md'],
   'gemini-cli':  ['GEMINI.md', 'AGENTS.md', 'CLAUDE.md'],
+  'antigravity': ['GEMINI.md', 'AGENTS.md', 'CLAUDE.md'],
   'codex-cli':   ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md'],
 }
 const DEFAULT_CONTEXT_FILES = ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']

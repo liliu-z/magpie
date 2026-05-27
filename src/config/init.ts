@@ -35,6 +35,13 @@ export const AVAILABLE_REVIEWERS: ReviewerOption[] = [
     needsApiKey: false
   },
   {
+    id: 'antigravity',
+    name: 'Antigravity CLI',
+    model: 'antigravity',
+    description: 'Uses your Antigravity CLI (agy) — Google account, no API key needed',
+    needsApiKey: false
+  },
+  {
     id: 'claude-api',
     name: 'Claude Sonnet 4.5',
     model: 'claude-sonnet-4-5-20250514',
