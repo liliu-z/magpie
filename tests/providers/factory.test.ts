@@ -39,6 +39,10 @@ describe('Provider Factory', () => {
     it('should return codex-cli for codex-cli model', () => {
       expect(getProviderForModel('codex-cli')).toBe('codex-cli')
     })
+
+    it('should return antigravity for antigravity model', () => {
+      expect(getProviderForModel('antigravity')).toBe('antigravity')
+    })
   })
 
   describe('createProvider', () => {
@@ -74,6 +78,11 @@ describe('Provider Factory', () => {
     it('should create codex-cli provider', () => {
       const provider = createProvider('codex-cli', mockConfig)
       expect(provider.name).toBe('codex-cli')
+    })
+
+    it('should create antigravity provider', () => {
+      const provider = createProvider('antigravity', mockConfig)
+      expect(provider.name).toBe('antigravity')
     })
 
     it('should pass base_url through to API providers', () => {
