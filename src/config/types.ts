@@ -8,10 +8,13 @@ export interface ReviewerConfig {
   model: string
   prompt: string
   /**
-   * Ledger flow only: where this finder goes deeper than the others. It is added to the
-   * review instruction, not substituted for it — every finder still sweeps its whole scope.
-   * Two finders on one model with one angle cost double and cover barely more than one;
-   * defaults are supplied per finder when this is unset.
+   * Ledger flow only, and off unless set: an extra angle for this finder on top of the shared
+   * review instruction.
+   *
+   * Finders are asked the same question by default, because that is what makes their agreement
+   * mean "two parties arrived here independently" and their silence mean "nobody raised it".
+   * Give them different angles and neither reading holds. Set this only when you want that
+   * trade, and check `finderStats.unique` to see whether it bought anything.
    */
   lens?: string
   /**

@@ -36,7 +36,11 @@ export interface FinderPromptInput {
   target: string
   targetDescription?: string
   shard?: Shard
-  /** Extra lens for this finder, so two finders on the same model don't do identical work */
+  /**
+   * Optional extra angle for this finder. Off by default: finders asked different questions
+   * produce agreement and silence the ledger cannot interpret — see the note in
+   * ledger-orchestrator.ts.
+   */
   lens?: string
   /**
    * Facts gathered once and shared by every finder: call sites, callers of changed symbols,

@@ -106,12 +106,9 @@ reviewers:
   claude:
     model: claude-code:claude-opus-5   # pin the model; a bare alias floats between runs
     effort: xhigh                      # low|medium|high|xhigh|max — claude-code only, default max
-    # Ledger flow only: where this finder digs deeper than the others. Added to the
-    # review instruction, never substituted for it — every finder still sweeps its
-    # whole scope. Optional; a per-finder default is used when unset.
-    lens: |
-      Go deeper on what breaks at runtime: nil and empty handling, error and
-      cancellation paths, concurrency and lock scope, resource lifetime.
+    # lens: (ledger flow, off unless set) an extra angle for this finder. Finders are
+    # asked the same question by default — see "Ledger Flow" for why differentiating
+    # them costs more than it buys.
     prompt: |
       You are a senior engineer reviewing this PR. Be precise and evidence-based.
       Review dimensions: Correctness, Security, Compatibility (rolling upgrade,
@@ -309,10 +306,17 @@ real, and whether the author can act on it — because collapsing them into one 
 is what files small-but-certain bugs as nitpicks. Areas nobody reviewed are reported explicitly
 rather than implied by silence.
 
-Each finder is given its own angle (configurable via `lens:`) so that several finders on one
-model don't retrace one path. The angle says where to dig deeper, never what to skip. Every run
-reports what each finder found alone versus shared, and accounts for the gap finder separately,
-so whether either is earning its cost is answerable from the run itself.
+**Every finder is asked the same question.** That is what lets the ledger read agreement as
+"two parties arrived here independently" and silence as "nobody raised it". Give finders
+different angles and neither reading survives: a shared finding might just be the overlap of two
+angles, and a finder that stayed quiet might have checked and disagreed — or might never have
+looked that way. It also undercuts scoping adjudication by file, which is what makes it safe for
+there to be no abstain stance: reading a file no longer implies being able to rule on findings
+in it. An angle is available per finder (`lens:`) for when you want that trade deliberately.
+
+If two identical finders turn out to duplicate each other, the fix is fewer finders, not
+different questions — and every run reports what each finder found alone versus shared, and
+accounts for the gap finder separately, so that is answerable from the run rather than argued.
 
 `judge` and `gapFinder` are optional config entries (see [Configuration](#configuration)).
 Without a judge, findings are merged by text similarity, which misses paraphrases of the same

@@ -44,22 +44,23 @@ import {
 import { extractChangedFiles } from './orchestrator.js'
 import { logger } from '../utils/logger.js'
 
-/**
- * Where each finder goes deeper, so two finders on one model don't retrace one path.
- *
- * These are additive, never a filter — the prompt tells every finder to sweep its whole scope
- * first. That distinction is the whole safety of the idea: an angle that narrows what gets
- * read trades a duplicate-coverage problem for a blind-spot problem, and a blind spot is the
- * failure nothing downstream can recover from.
- *
- * Overridable per reviewer via `lens:` in config. A finder past the end of this list reuses an
- * earlier angle, which is why more same-model finders stop paying for themselves.
- */
-export const DEFAULT_LENSES = [
-  'Focus on what breaks at runtime: nil/empty handling, error paths, concurrency, resource lifetime, and cancellation.',
-  'Focus on contracts and interactions: callers of changed interfaces, rolling-upgrade and compatibility risk, shared state across features, and invariants this change relies on.',
-  'Focus on data and state: persisted or serialized formats, migration and backfill paths, state machines and their illegal transitions, and what a partial or retried operation leaves behind.',
-]
+// Finders are asked the same question by default, and `lens:` in config is the deliberate
+// exception rather than something applied automatically.
+//
+// Differentiating them is tempting — two finders on one model look like duplicated spend — but
+// it costs the two things this flow runs on. Agreement stops being clean: if both report a
+// finding, was it because the finding is solid, or because it sat in the overlap of two
+// angles? And silence stops meaning anything: a finder that did not raise something might
+// have checked and disagreed, or might never have looked that way, and the ledger cannot tell
+// those apart. Scoping adjudication by file — which is what makes it safe to have no abstain
+// stance — assumes reading a file means being able to rule on findings in it, and an angle
+// breaks that assumption while leaving the file in scope.
+//
+// An angle also can only subtract. A model told to go deep on one axis is not better at that
+// axis than the same model told to find every defect; it is only worse everywhere else.
+//
+// If two identical finders genuinely duplicate each other, `finderStats.unique` says so, and
+// the answer is fewer finders — not different questions.
 
 export interface LedgerOrchestratorOptions {
   /** Total rounds including round 1 and 2. Rounds past 2 only handle open entries. */
@@ -327,7 +328,7 @@ export class LedgerOrchestrator {
             target,
             targetDescription,
             shard,
-            lens: finder.lens ?? DEFAULT_LENSES[i % DEFAULT_LENSES.length],
+            lens: finder.lens,
             sharedContext: this.options.sharedContext,
             langSuffix: this.langSuffix,
           })

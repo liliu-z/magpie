@@ -461,7 +461,9 @@ describe('LedgerOrchestrator with a judge', () => {
 })
 
 describe('lenses', () => {
-  it('gives each finder a different angle by default', async () => {
+  // Identical questions are what let the ledger read agreement as independent arrival and
+  // silence as "nobody raised it". Differentiating finders by default would break both.
+  it('asks every finder the same question by default', async () => {
     const a = reviewer('finderA', p => isFinderPrompt(p) ? findings() : adjudications())
     const b = reviewer('finderB', p => isFinderPrompt(p) ? findings() : adjudications())
     const verifier = reviewer('verifier', () => verdicts())
@@ -471,30 +473,20 @@ describe('lenses', () => {
 
     const [pa] = (a.provider as ScriptedProvider).prompts
     const [pb] = (b.provider as ScriptedProvider).prompts
-    expect(pa).toContain('Where to go deeper')
-    expect(pa).not.toBe(pb)
+    expect(pa).toBe(pb)
+    expect(pa).not.toContain('Where to go deeper')
   })
 
-  it('lets config override the angle', async () => {
+  it('adds an angle only when config asks for one', async () => {
     const a = { ...reviewer('finderA', p => isFinderPrompt(p) ? findings() : adjudications()), lens: 'Focus on the billing rounding rules.' }
     const verifier = reviewer('verifier', () => verdicts())
 
     const orch = new LedgerOrchestrator([a], verifier, undefined, { maxRounds: 2, gapFinderEnabled: false })
     await orch.run('PR #1', 'title', DIFF)
 
-    expect((a.provider as ScriptedProvider).prompts[0]).toContain('Focus on the billing rounding rules.')
-  })
-
-  // The angle must widen where a finder digs, never narrow what it opens — a blind spot is
-  // the one failure no later stage can recover from
-  it('states that the angle is not a filter', async () => {
-    const a = reviewer('finderA', p => isFinderPrompt(p) ? findings() : adjudications())
-    const verifier = reviewer('verifier', () => verdicts())
-
-    const orch = new LedgerOrchestrator([a], verifier, undefined, { maxRounds: 2, gapFinderEnabled: false })
-    await orch.run('PR #1', 'title', DIFF)
-
     const prompt = (a.provider as ScriptedProvider).prompts[0]
+    expect(prompt).toContain('Focus on the billing rounding rules.')
+    // Opted in or not, an angle must widen where a finder digs and never narrow what it opens
     expect(prompt).toContain('Sweep your whole scope first')
     expect(prompt).toContain('It is not a filter')
   })
