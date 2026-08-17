@@ -60,7 +60,7 @@ export function getProviderForModel(model: string): 'anthropic' | 'openai' | 'go
   throw new Error(`Unknown model: ${model}`)
 }
 
-export function createProvider(model: string, config: MagpieConfig): AIProvider {
+export function createProvider(model: string, config: MagpieConfig, effort?: string): AIProvider {
   // Global mock mode: override all models to MockProvider
   if (config.mock) {
     return new MockProvider()
@@ -73,37 +73,37 @@ export function createProvider(model: string, config: MagpieConfig): AIProvider 
   // Claude Code doesn't need API key config
   if (providerName === 'claude-code') {
     checkCliBinary('claude', 'Claude Code')
-    return new ClaudeCodeProvider({ cliModel })
+    return new ClaudeCodeProvider({ cliModel, effort })
   }
 
   // Codex CLI doesn't need API key config
   if (providerName === 'codex-cli') {
     checkCliBinary('codex', 'Codex')
-    return new CodexCliProvider({ cliModel })
+    return new CodexCliProvider({ cliModel, effort })
   }
 
   // Gemini CLI doesn't need API key config (uses Google account)
   if (providerName === 'gemini-cli') {
     checkCliBinary('gemini', 'Gemini')
-    return new GeminiCliProvider({ cliModel })
+    return new GeminiCliProvider({ cliModel, effort })
   }
 
   // Antigravity CLI (`agy`) doesn't need API key config (uses Google account)
   if (providerName === 'antigravity') {
     checkCliBinary('agy', 'Antigravity')
-    return new AntigravityCliProvider({ cliModel })
+    return new AntigravityCliProvider({ cliModel, effort })
   }
 
   // opencode doesn't need API key config (uses its own configured provider credentials)
   if (providerName === 'opencode') {
     checkCliBinary('opencode', 'OpenCode')
-    return new OpenCodeProvider({ cliModel })
+    return new OpenCodeProvider({ cliModel, effort })
   }
 
   // Qwen Code CLI doesn't need API key config (uses OAuth)
   if (providerName === 'qwen-code') {
     checkCliBinary('qwen', 'Qwen Code')
-    return new QwenCodeProvider({ cliModel })
+    return new QwenCodeProvider({ cliModel, effort })
   }
 
   // Mock provider for debug mode — no API key needed

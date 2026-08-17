@@ -30,6 +30,11 @@ export interface ProviderOptions {
 
 export interface CliProviderOptions {
   cliModel?: string  // Model to pass via --model flag to CLI tools
+  /**
+   * Reasoning effort. Currently honoured by claude-code only; other CLIs ignore it.
+   * Unset keeps each provider's own default rather than imposing one.
+   */
+  effort?: string
 }
 
 // Helper to generate session IDs

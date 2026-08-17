@@ -4,11 +4,58 @@ import { CliSessionHelper } from './session-helper.js'
 import { preparePromptForCli } from '../utils/prompt-file.js'
 import { withRetry } from '../utils/retry.js'
 
+export interface ClaudeArgsOptions {
+  effort: string
+  cliModel?: string
+  /** Set on the first message of a session; resumes it afterwards */
+  sessionId?: string
+  isFirstMessage?: boolean
+  systemPrompt?: string
+  disableTools?: boolean
+  stream?: boolean
+}
+
+/**
+ * Build the argv for `claude -p`. Extracted so the flags can be asserted directly — a
+ * per-role setting that silently stops reaching the CLI looks exactly like one that works.
+ */
+export function buildClaudeArgs(options: ClaudeArgsOptions): string[] {
+  // --dangerously-skip-permissions so the reviewer can read files and run `gh` unattended
+  const args = ['-p', '-', '--dangerously-skip-permissions', '--effort', options.effort]
+  if (options.stream) {
+    // stream-json + verbose so tool activity produces stdout events, which keeps the
+    // inactivity timeout from killing Claude while it is busy investigating code
+    args.push('--output-format', 'stream-json', '--verbose')
+  }
+  if (options.cliModel) {
+    args.push('--model', options.cliModel)
+  }
+  // Disable all tools for pure text extraction (e.g. JSON structurization); without this
+  // Claude may reach for Edit/Write to modify files instead of just answering
+  if (options.disableTools) {
+    args.push('--tools', '')
+  }
+  if (options.sessionId) {
+    if (options.isFirstMessage) {
+      args.push('--session-id', options.sessionId)
+      if (options.systemPrompt) {
+        args.push('--system-prompt', options.systemPrompt)
+      }
+    } else {
+      args.push('--resume', options.sessionId)
+    }
+  }
+  return args
+}
+
 export class ClaudeCodeProvider implements AIProvider {
   name = 'claude-code'
   private cwd: string
   private timeout: number  // ms, 0 = no timeout
   private cliModel?: string
+  // Review is the kind of work that rewards thinking, so the default stays at the top of the
+  // scale; config lowers it per role when a stage does not need to pay for that.
+  private effort: string
   private session = new CliSessionHelper()
 
   get sessionId() { return this.session.sessionId }
@@ -19,6 +66,7 @@ export class ClaudeCodeProvider implements AIProvider {
     this.cwd = process.cwd()
     this.timeout = 15 * 60 * 1000  // 15 minutes default
     this.cliModel = options?.cliModel
+    this.effort = options?.effort || 'max'
   }
 
   setCwd(cwd: string) {
@@ -73,27 +121,14 @@ export class ClaudeCodeProvider implements AIProvider {
     const { prompt: stdinPrompt, cleanup } = preparePromptForCli(prompt)
 
     return new Promise((resolve, reject) => {
-      // Build args based on session state
-      // Use --dangerously-skip-permissions to allow network access (e.g., gh commands)
-      const args = ['-p', '-', '--dangerously-skip-permissions', '--effort', 'max']
-      if (this.cliModel) {
-        args.push('--model', this.cliModel)
-      }
-      // Disable all tools for pure text extraction (e.g., JSON structurization)
-      // Without this, Claude may use Edit/Write to modify files instead of outputting text
-      if (options?.disableTools) {
-        args.push('--tools', '')
-      }
-      if (this.session.sessionId) {
-        if (this.session.isFirstMessage) {
-          args.push('--session-id', this.session.sessionId)
-          if (systemPrompt) {
-            args.push('--system-prompt', systemPrompt)
-          }
-        } else {
-          args.push('--resume', this.session.sessionId)
-        }
-      }
+      const args = buildClaudeArgs({
+        effort: this.effort,
+        cliModel: this.cliModel,
+        sessionId: this.session.sessionId,
+        isFirstMessage: this.session.isFirstMessage,
+        systemPrompt,
+        disableTools: options?.disableTools,
+      })
 
       const child = spawn('claude', args, {
         cwd: this.cwd,
@@ -137,25 +172,14 @@ export class ClaudeCodeProvider implements AIProvider {
   private async *runClaudeStream(prompt: string, systemPrompt?: string): AsyncGenerator<string, void, unknown> {
     const { prompt: stdinPrompt, cleanup } = preparePromptForCli(prompt)
 
-    // Build args based on session state
-    // Use --dangerously-skip-permissions to allow network access (e.g., gh commands)
-    // Use --output-format stream-json --verbose so that tool activity (Read, Bash, etc.)
-    // produces stdout events, preventing the inactivity timeout from killing Claude
-    // while it's actively investigating code.
-    const args = ['-p', '-', '--dangerously-skip-permissions', '--effort', 'max', '--output-format', 'stream-json', '--verbose']
-    if (this.cliModel) {
-      args.push('--model', this.cliModel)
-    }
-    if (this.session.sessionId) {
-      if (this.session.isFirstMessage) {
-        args.push('--session-id', this.session.sessionId)
-        if (systemPrompt) {
-          args.push('--system-prompt', systemPrompt)
-        }
-      } else {
-        args.push('--resume', this.session.sessionId)
-      }
-    }
+    const args = buildClaudeArgs({
+      effort: this.effort,
+      cliModel: this.cliModel,
+      sessionId: this.session.sessionId,
+      isFirstMessage: this.session.isFirstMessage,
+      systemPrompt,
+      stream: true,
+    })
 
     const child = spawn('claude', args, {
       cwd: this.cwd,

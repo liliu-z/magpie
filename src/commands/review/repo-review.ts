@@ -178,7 +178,7 @@ export async function handleRepoReview(options: { path?: string; ignore?: string
   }
 
   if (!analysis) {
-    const analyzerProvider = createProvider(config.summarizer.model, config)
+    const analyzerProvider = createProvider(config.summarizer.model, config, config.summarizer.effort)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AIProvider.chat uses strict Message role, FeatureAnalyzerConfig uses string
     const analyzer = new FeatureAnalyzer({ provider: analyzerProvider as any })
     analysis = await analyzer.analyze(files)
@@ -315,13 +315,13 @@ export async function executeFeatureReview(
   // Create reviewers
   const reviewers = Object.entries(config.reviewers).map(([id, cfg]) => ({
     id,
-    provider: createProvider(cfg.model, config),
+    provider: createProvider(cfg.model, config, cfg.effort),
     systemPrompt: cfg.prompt
   }))
 
   const summarizer = {
     id: 'summarizer',
-    provider: createProvider(config.summarizer.model, config),
+    provider: createProvider(config.summarizer.model, config, config.summarizer.effort),
     systemPrompt: config.summarizer.prompt
   }
 

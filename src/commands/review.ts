@@ -379,7 +379,7 @@ export const reviewCommand = new Command('review')
       // Create reviewers
       const reviewers: Reviewer[] = selectedIds.map(id => ({
         id,
-        provider: createProvider(config.reviewers[id].model, config),
+        provider: createProvider(config.reviewers[id].model, config, config.reviewers[id].effort),
         systemPrompt: config.reviewers[id].prompt,
         lens: config.reviewers[id].lens
       }))
@@ -387,14 +387,14 @@ export const reviewCommand = new Command('review')
       // Create summarizer
       const summarizer: Reviewer = {
         id: 'summarizer',
-        provider: createProvider(config.summarizer.model, config),
+        provider: createProvider(config.summarizer.model, config, config.summarizer.effort),
         systemPrompt: config.summarizer.prompt
       }
 
       // Create analyzer
       const analyzer: Reviewer = {
         id: 'analyzer',
-        provider: createProvider(config.analyzer.model, config),
+        provider: createProvider(config.analyzer.model, config, config.analyzer.effort),
         systemPrompt: config.analyzer.prompt
       }
 
@@ -403,7 +403,7 @@ export const reviewCommand = new Command('review')
       const auditor: Reviewer | undefined = config.audit
         ? {
             id: 'auditor',
-            provider: createProvider(config.audit.model, config),
+            provider: createProvider(config.audit.model, config, config.audit.effort),
             systemPrompt: config.audit.prompt
           }
         : undefined
@@ -419,7 +419,7 @@ export const reviewCommand = new Command('review')
 
       if (contextEnabled) {
         contextGatherer = new ContextGatherer({
-          provider: createProvider(contextModel, config),
+          provider: createProvider(contextModel, config, config.contextGatherer?.effort),
           language: config.defaults.language,
           options: {
             callChain: config.contextGatherer?.callChain,
@@ -440,12 +440,26 @@ export const reviewCommand = new Command('review')
 
       console.log()
       console.log(chalk.bgBlue.white.bold(` ${target.label} Review `))
-      console.log(chalk.dim(`├─ Reviewers: ${selectedIds.map(id => `${chalk.cyan(id)} ${chalk.gray('(' + config.reviewers[id].model + ')')}`).join(', ')}`))
+      console.log(chalk.dim(`├─ Reviewers: ${selectedIds.map(id => {
+        const r = config.reviewers[id]
+        return `${chalk.cyan(id)} ${chalk.gray('(' + r.model + (r.effort ? '/' + r.effort : '') + ')')}`
+      }).join(', ')}`))
       console.log(chalk.dim(`├─ Max rounds: ${maxRounds} (${roundsSource})`))
       console.log(chalk.dim(`├─ Convergence: ${checkConvergence ? 'enabled' : 'disabled'}`))
       // Log every stage's effective model — without this, results can't be attributed to a
       // model after the fact, which makes any before/after comparison unfalsifiable.
-      console.log(chalk.dim(`├─ Stage models: analyzer=${config.analyzer.model} summarizer=${config.summarizer.model} audit=${config.audit?.model || config.summarizer.model + ' (fallback)'}`))
+      const stageModel = (c?: { model: string; effort?: string }, fallback?: string) =>
+        c ? `${c.model}${c.effort ? `/${c.effort}` : ''}` : `${fallback} (fallback)`
+      const stages = [
+        `analyzer=${stageModel(config.analyzer)}`,
+        `summarizer=${stageModel(config.summarizer)}`,
+        `audit=${stageModel(config.audit, config.summarizer.model)}`,
+        ...(options.ledger ? [
+          `judge=${config.judge ? stageModel(config.judge) : 'none (similarity merge)'}`,
+          `gapFinder=${config.gapFinder ? stageModel(config.gapFinder) : 'none'}`,
+        ] : []),
+      ]
+      console.log(chalk.dim(`├─ Stage models: ${stages.join(' ')}`))
       console.log(chalk.dim(`└─ Context gathering: ${contextEnabled ? (contextAgentMode ? 'agent mode' : 'diff mode') : 'disabled'}`))
 
       let currentReviewer = ''
@@ -715,10 +729,10 @@ export const reviewCommand = new Command('review')
           finders: reviewers,
           verifier: auditor || summarizer,
           gapFinder: gapFinderCfg
-            ? { id: 'gap-finder', provider: createProvider(gapFinderCfg.model, config), systemPrompt: gapFinderCfg.prompt }
+            ? { id: 'gap-finder', provider: createProvider(gapFinderCfg.model, config, gapFinderCfg.effort), systemPrompt: gapFinderCfg.prompt }
             : undefined,
           judge: judgeCfg
-            ? { id: 'judge', provider: createProvider(judgeCfg.model, config), systemPrompt: judgeCfg.prompt }
+            ? { id: 'judge', provider: createProvider(judgeCfg.model, config, judgeCfg.effort), systemPrompt: judgeCfg.prompt }
             : undefined,
           label: target.label,
           target: target.prompt.match(/https:\/\/github\.com\/\S+?\/pull\/\d+/)?.[0] || target.label,

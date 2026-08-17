@@ -104,7 +104,8 @@ defaults:
 # Reviewers - same perspective, different models
 reviewers:
   claude:
-    model: claude-code
+    model: claude-code:claude-opus-5   # pin the model; a bare alias floats between runs
+    effort: xhigh                      # low|medium|high|xhigh|max — claude-code only, default max
     # Ledger flow only: where this finder digs deeper than the others. Added to the
     # review instruction, never substituted for it — every finder still sweeps its
     # whole scope. Optional; a per-finder default is used when unset.
@@ -148,7 +149,8 @@ summarizer:
 # Audit - fact-checks each extracted issue against the code (optional).
 # In the ledger flow this is the verifier: it may keep/rewrite/drop, never add.
 audit:
-  model: claude-code
+  model: claude-code:claude-opus-5
+  effort: xhigh
   prompt: |
     Verify each issue against the actual code from first principles.
     Every verdict needs file:LINE, a verbatim quote, and how it bears on the claim.
@@ -166,7 +168,8 @@ judge:
 # finders missed; its additions go back through the verifier before they can ship.
 # Use a different model family from the finders, or it shares their blind spots.
 gapFinder:
-  model: claude-code
+  model: claude-code:claude-opus-5
+  effort: xhigh
   prompt: |
     Find only what the reviewers missed. Evidence or silence.
 

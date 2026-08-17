@@ -14,6 +14,11 @@ export interface ReviewerConfig {
    * defaults are supplied per finder when this is unset.
    */
   lens?: string
+  /**
+   * Reasoning effort for this role: low | medium | high | xhigh | max.
+   * claude-code only today; other CLIs ignore it. Unset means the provider default (max).
+   */
+  effort?: string
 }
 
 export interface DefaultsConfig {
@@ -26,6 +31,8 @@ export interface DefaultsConfig {
 
 export interface ContextGathererConfigOptions {
   enabled: boolean
+  /** Reasoning effort; see ReviewerConfig.effort. Gathering facts rarely needs the top tier. */
+  effort?: string
   callChain?: {
     maxDepth?: number
     maxFilesToAnalyze?: number

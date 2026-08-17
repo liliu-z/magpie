@@ -80,6 +80,23 @@ describe('Provider Factory', () => {
       expect(provider.name).toBe('claude-code')
     })
 
+    // Effort is configured per role, so the factory is the one place it can go missing
+    it('forwards the role effort to the provider', () => {
+      const provider = createProvider('claude-code', mockConfig, 'xhigh') as unknown as { effort: string }
+      expect(provider.effort).toBe('xhigh')
+    })
+
+    it('leaves the provider default in place when no effort is configured', () => {
+      const provider = createProvider('claude-code', mockConfig) as unknown as { effort: string }
+      expect(provider.effort).toBe('max')
+    })
+
+    it('forwards a pinned model alongside the effort', () => {
+      const provider = createProvider('claude-code:claude-opus-5', mockConfig, 'xhigh') as unknown as { cliModel: string; effort: string }
+      expect(provider.cliModel).toBe('claude-opus-5')
+      expect(provider.effort).toBe('xhigh')
+    })
+
     it('should create gemini provider', () => {
       const configWithGoogle = {
         ...mockConfig,
