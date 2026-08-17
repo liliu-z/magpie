@@ -96,7 +96,7 @@ providers:
 
 # Default settings
 defaults:
-  max_rounds: 5           # Maximum debate rounds
+  max_rounds: 5           # Maximum debate rounds (overridden by -r/--rounds)
   output_format: markdown
   check_convergence: true  # Stop early when consensus reached
   language: en             # Output language (e.g., 'zh', 'en', 'ja')
@@ -139,6 +139,31 @@ summarizer:
     3. Recommended action items
     4. Overall assessment
 
+# Audit - fact-checks each extracted issue against the code (optional).
+# In the ledger flow this is the verifier: it may keep/rewrite/drop, never add.
+audit:
+  model: claude-code
+  prompt: |
+    Verify each issue against the actual code from first principles.
+    Every verdict needs file:LINE, a verbatim quote, and how it bears on the claim.
+
+# Judge - ledger flow only (optional). Groups the finders' raw findings into ledger
+# entries, then decides after each round what the recorded positions add up to.
+# Without it, findings are merged by text similarity and paraphrases stay separate.
+judge:
+  model: claude-code
+  prompt: |
+    You weigh evidence, not opinions. Quoted code beats assertion; counting positions
+    is not judging.
+
+# Gap finder - ledger flow only (optional). The one role allowed to raise what the
+# finders missed; its additions go back through the verifier before they can ship.
+# Use a different model family from the finders, or it shares their blind spots.
+gapFinder:
+  model: claude-code
+  prompt: |
+    Find only what the reviewers missed. Evidence or silence.
+
 # Context Gatherer - system context before review (optional)
 contextGatherer:
   enabled: true              # Enable/disable context gathering
@@ -165,11 +190,13 @@ magpie review [pr-number|url] [options]
 
 Options:
   -c, --config <path>       Path to config file
-  -r, --rounds <number>     Maximum debate rounds (default: 5)
+  -r, --rounds <number>     Maximum debate rounds (default: defaults.max_rounds from config)
   -i, --interactive         Interactive mode (pause between turns, Q&A)
   -o, --output <file>       Output to file
   -f, --format <format>     Output format (markdown|json)
   --no-converge             Disable convergence detection (enabled by default)
+  --ledger                  Use the issue-ledger flow (see below)
+  --shard-size <number>     Files per review shard in ledger mode (default: 8)
   -l, --local               Review local uncommitted changes
   -b, --branch [base]       Review current branch vs base (default: main)
   --files <files...>        Review specific files
@@ -238,6 +265,50 @@ magpie review 12345 -a
 
 # Specify reviewers by ID
 magpie review 12345 --reviewers claude-code,gemini-cli
+```
+
+### Ledger Flow (`--ledger`)
+
+An alternative pipeline for the same review. The default flow carries findings as reviewer
+prose and structures them once at the end; the ledger flow structures every finding the moment
+it is raised and only ever changes its state. Output format is unchanged, so it drops into any
+existing consumer.
+
+```
+plan shards
+  → round 1: finders work independently, shard by shard   (no shared framing)
+  → judge:   cluster the raw findings into the ledger     (may group, may not delete)
+  → round 2: finders rule on entries in the code they read (evidence, or it is discarded)
+  → judge:   weigh the positions, set each entry's state  (bounded by what was recorded)
+  → round 3+: repeat on open entries until nothing moves
+  → verifier: rules on every entry, may not add           (set-in = set-out)
+  → gap finder: may add, may not publish                  (its additions go back to verify)
+  → publish gate: three scores decide inline / summary / drop
+```
+
+What each role may and may not do is enforced in code, not requested in a prompt:
+
+| Role | May | May not |
+|------|-----|---------|
+| Finder | raise findings, take positions on others' | vouch for its own finding; take a position without its own `file:LINE` + quote |
+| Judge | group findings, pick canonical wording, set states | drop a finding, author finding text, state more than the recorded evidence supports |
+| Verifier | keep / rewrite / drop | add a finding; leave one unanswered without it being marked unverified |
+| Gap finder | raise what everyone missed | publish — its additions are re-verified |
+
+Findings are scored on three independent axes — how sure we are it is real, how bad it is if
+real, and whether the author can act on it — because collapsing them into one severity number
+is what files small-but-certain bugs as nitpicks. Areas nobody reviewed are reported explicitly
+rather than implied by silence.
+
+`judge` and `gapFinder` are optional config entries (see [Configuration](#configuration)).
+Without a judge, findings are merged by text similarity, which misses paraphrases of the same
+bug. Without a gap finder, nothing in the flow may add a missed finding — the verifier cannot.
+Point the gap finder at a different model family from the finders, or it reproduces their blind
+spots.
+
+```bash
+magpie review 12345 --ledger
+magpie review 12345 --ledger --shard-size 4
 ```
 
 ### Review Modes

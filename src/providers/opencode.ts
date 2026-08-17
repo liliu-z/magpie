@@ -22,6 +22,25 @@ export interface OpencodeArgsOptions {
   disableTools?: boolean
 }
 
+/**
+ * opencode keeps session state in a shared SQLite database, so concurrent runs (several
+ * reviewers, or one reviewer sharded across files) can collide on it. The collision is
+ * transient — a retry a second later succeeds — but it does not look like any of the
+ * network errors the default retry predicate recognises.
+ */
+export function isOpencodeTransientError(error: unknown): boolean {
+  const msg = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase()
+  return msg.includes('database is locked')
+    || msg.includes('database table is locked')
+    || msg.includes('sqlite_busy')
+    || msg.includes('timeout')
+    || msg.includes('econnreset')
+    || msg.includes('rate limit')
+    || msg.includes('429')
+    || msg.includes('502')
+    || msg.includes('503')
+}
+
 /** Build the argv for `opencode run`. The prompt is never a positional — it goes on stdin. */
 export function buildOpencodeArgs(options: OpencodeArgsOptions = {}): string[] {
   // --auto: auto-approve permissions, so the reviewer can read files and run `gh` unattended
@@ -159,7 +178,10 @@ export class OpenCodeProvider implements AIProvider {
       ? this.session.buildPromptLastOnly(messages)
       : this.session.buildPrompt(messages, systemPrompt)
     try {
-      const result = await withRetry(() => this.runOpencode(prompt, resume, options))
+      const result = await withRetry(
+        () => this.runOpencode(prompt, resume, options),
+        { maxAttempts: 4, backoffMs: [1000, 3000, 6000], shouldRetry: isOpencodeTransientError },
+      )
       this.markSent()
       return result
     } catch (err) {

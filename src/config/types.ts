@@ -50,5 +50,16 @@ export interface MagpieConfig {
   summarizer: ReviewerConfig
   analyzer: ReviewerConfig
   audit?: ReviewerConfig  // Omniscient final judge; falls back to summarizer if absent
+  // Ledger flow only: the role allowed to raise findings the finders missed. Deliberately
+  // separate from `audit` — the verifier rules on findings and may not add them, this one
+  // adds and may not publish. Point it at a different model family from the finders, or it
+  // just reproduces their blind spots.
+  gapFinder?: ReviewerConfig
+  // Ledger flow only: groups the finders' raw findings into ledger entries and, after each
+  // round, decides what the recorded positions add up to. It reads everything, so it is kept
+  // on a short leash in code — it selects canonical wording rather than writing any, and can
+  // only move an entry to a state the recorded evidence already supports. Without it the flow
+  // falls back to merging findings by word overlap, which misses paraphrases.
+  judge?: ReviewerConfig
   contextGatherer?: ContextGathererConfigOptions
 }

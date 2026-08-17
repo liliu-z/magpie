@@ -1,6 +1,6 @@
 // tests/providers/opencode.test.ts
 import { describe, it, expect, beforeEach } from 'vitest'
-import { buildOpencodeArgs, OpencodeEventParser } from '../../src/providers/opencode.js'
+import { buildOpencodeArgs, OpencodeEventParser, isOpencodeTransientError } from '../../src/providers/opencode.js'
 
 // Helper: build one NDJSON line the way `opencode run --format json` emits them
 function evt(type: string, part: Record<string, unknown>, sessionID = 'ses_abc'): string {
@@ -61,6 +61,27 @@ describe('buildOpencodeArgs', () => {
   it('passes session id through --session', () => {
     const args = buildOpencodeArgs({ sessionId: 'ses_xyz' })
     expect(args[args.indexOf('--session') + 1]).toBe('ses_xyz')
+  })
+})
+
+describe('isOpencodeTransientError', () => {
+  // Seen for real when two reviewers ran concurrently: opencode's shared SQLite state
+  // collides, and the default transient-error predicate does not recognise it
+  it('retries a locked database', () => {
+    expect(isOpencodeTransientError(new Error('OpenCode CLI exited with code 1: database is locked'))).toBe(true)
+    expect(isOpencodeTransientError(new Error('SQLITE_BUSY: database table is locked'))).toBe(true)
+  })
+
+  it('retries the usual transient network failures', () => {
+    expect(isOpencodeTransientError(new Error('request timeout'))).toBe(true)
+    expect(isOpencodeTransientError(new Error('rate limit exceeded'))).toBe(true)
+    expect(isOpencodeTransientError(new Error('upstream returned 503'))).toBe(true)
+  })
+
+  it('does not retry a real failure', () => {
+    expect(isOpencodeTransientError(new Error('OpenCode CLI produced no response'))).toBe(false)
+    expect(isOpencodeTransientError(new Error('model not found'))).toBe(false)
+    expect(isOpencodeTransientError(null)).toBe(false)
   })
 })
 

@@ -66,6 +66,181 @@ export function extractDiffLineRanges(diff: string): string {
     .join('\n')
 }
 
+/** One auditor verdict as it comes back from the model. */
+export interface AuditVerdict {
+  verdict: 'keep' | 'rewrite' | 'drop' | 'new'
+  originalIndex?: number
+  file?: string
+  line?: number
+  severity?: MergedIssue['severity']
+  category?: string
+  body?: string
+  evidence?: string
+  reason?: string
+  auditReason?: string   // alias some prompts use
+}
+
+/**
+ * Pull the verdict list out of an audit response.
+ * Returns null when the response cannot be parsed — the caller must NOT treat that
+ * as "everything checks out".
+ */
+export function parseAuditVerdicts(response: string): AuditVerdict[] | null {
+  const fenced = response.match(/```json\s*([\s\S]*?)\s*```/)
+  const jsonStr = fenced?.[1] || response
+  const match = jsonStr.match(/\{[\s\S]*"verifiedIssues"\s*:\s*\[[\s\S]*?\]\s*\}/)
+  if (!match) return null
+  try {
+    const parsed = JSON.parse(match[0])
+    if (!Array.isArray(parsed.verifiedIssues)) return null
+    return parsed.verifiedIssues as AuditVerdict[]
+  } catch {
+    return null
+  }
+}
+
+export interface AuditReconciliation {
+  issues: MergedIssue[]
+  unanswered: number[]
+  dropReasons: Array<{ index: number; title: string; reason: string }>
+  stats: { kept: number; rewrites: number; dropped: number; added: number; unanswered: number }
+}
+
+/**
+ * Merge auditor verdicts back onto the issues that were sent to it.
+ *
+ * The contract is a set relation: every input issue MUST come back with a verdict.
+ * An issue the auditor never mentions is NOT a silent deletion — it is kept and
+ * counted as unanswered, so a lazy or truncated audit degrades into "unverified"
+ * instead of quietly erasing findings.
+ */
+export function reconcileAuditVerdicts(issues: MergedIssue[], verdicts: AuditVerdict[]): AuditReconciliation {
+  const answered = new Map<number, AuditVerdict>()
+  const dropped = new Set<number>()
+  const added: MergedIssue[] = []
+  const dropReasons: AuditReconciliation['dropReasons'] = []
+  let rewrites = 0
+
+  for (const v of verdicts) {
+    if (v.verdict === 'new') {
+      // No evidence = no issue; the auditor's additions get no free pass
+      if (!v.file || typeof v.line !== 'number' || !v.body || !v.evidence) continue
+      added.push({
+        severity: v.severity || 'low',
+        category: v.category || 'general',
+        file: v.file,
+        line: v.line,
+        title: v.body.split(/[.!?\n]/)[0].slice(0, 100),
+        description: v.body,
+        raisedBy: ['auditor'],
+        descriptions: [v.body],
+        verdict: 'new',
+        body: v.body,
+        evidence: v.evidence,
+      } as MergedIssue)
+      continue
+    }
+
+    const idx = v.originalIndex
+    if (typeof idx !== 'number' || idx < 0 || idx >= issues.length) continue
+
+    if (v.verdict === 'drop') {
+      // A drop always wins over a keep for the same issue
+      dropped.add(idx)
+      answered.set(idx, v)
+      dropReasons.push({
+        index: idx,
+        title: issues[idx].title,
+        reason: v.reason || v.auditReason || '(no reason given)',
+      })
+      continue
+    }
+
+    if (dropped.has(idx)) continue
+    answered.set(idx, v)
+  }
+
+  const result: MergedIssue[] = []
+  const unanswered: number[] = []
+
+  // Walk the input in order so output order is stable regardless of verdict order
+  for (let i = 0; i < issues.length; i++) {
+    if (dropped.has(i)) continue
+    const v = answered.get(i)
+    if (!v) {
+      unanswered.push(i)
+      result.push(issues[i])
+      continue
+    }
+    if (v.verdict === 'rewrite') rewrites++
+    result.push({
+      ...issues[i],
+      severity: v.severity || issues[i].severity,
+      file: v.file || issues[i].file,
+      line: typeof v.line === 'number' ? v.line : issues[i].line,
+      verdict: v.verdict,
+      body: v.body,   // undefined on keep-no-change is fine
+      evidence: v.evidence,
+    })
+  }
+
+  result.push(...added)
+
+  return {
+    issues: result,
+    unanswered,
+    dropReasons,
+    stats: {
+      kept: result.length - added.length - rewrites,
+      rewrites,
+      dropped: dropped.size,
+      added: added.length,
+      unanswered: unanswered.length,
+    },
+  }
+}
+
+/**
+ * GitHub only accepts inline comments on lines that appear in the diff. Strip line
+ * numbers that fall outside every hunk instead of dropping the finding — a real
+ * issue with an unusable line is still worth posting, a wrong line is not.
+ */
+export function clampIssuesToDiff(issues: MergedIssue[], diff: string): { issues: MergedIssue[]; adjusted: number } {
+  if (!diff.trim()) return { issues, adjusted: 0 }
+
+  const ranges = new Map<string, Array<[number, number]>>()
+  let currentFile = ''
+  for (const line of diff.split('\n')) {
+    const fileMatch = line.match(/^diff --git a\/.+ b\/(.+)/)
+    if (fileMatch) {
+      currentFile = fileMatch[1]
+      if (!ranges.has(currentFile)) ranges.set(currentFile, [])
+      continue
+    }
+    const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/)
+    if (hunkMatch && currentFile) {
+      const start = parseInt(hunkMatch[1])
+      const count = hunkMatch[2] ? parseInt(hunkMatch[2]) : 1
+      ranges.get(currentFile)!.push([start, start + count - 1])
+    }
+  }
+
+  if (ranges.size === 0) return { issues, adjusted: 0 }
+
+  let adjusted = 0
+  const out = issues.map(issue => {
+    if (typeof issue.line !== 'number' || !issue.file) return issue
+    const fileRanges = ranges.get(issue.file)
+    const inRange = fileRanges?.some(([lo, hi]) => issue.line! >= lo && issue.line! <= hi)
+    if (inRange) return issue
+    adjusted++
+    const { line, ...rest } = issue
+    return rest as MergedIssue
+  })
+
+  return { issues: out, adjusted }
+}
+
 export class DebateOrchestrator {
   private reviewers: Reviewer[]
   private summarizer: Reviewer
@@ -371,8 +546,19 @@ NOT_CONVERGED`
         ? (async () => {
             this.options.onWaiting?.('context-gatherer')
             try {
-              const diff = this.extractDiffFromPrompt(prompt)
-              this.gatheredContext = await this.contextGatherer!.gather(diff, label, 'main')
+              if (this.options.contextAgentMode) {
+                // No diff in the prompt (CLI mode) — let the gatherer go find context itself
+                const prUrl = prompt.match(/https:\/\/github\.com\/\S+?\/pull\/\d+/)?.[0]
+                this.gatheredContext = await this.contextGatherer!.gatherViaAgent(
+                  prUrl || label,
+                  label,
+                  'main',
+                  prompt.slice(0, 4000)
+                )
+              } else {
+                const diff = this.extractDiffFromPrompt(prompt)
+                this.gatheredContext = await this.contextGatherer!.gather(diff, label, 'main')
+              }
             } catch (error) {
               if (this.options.failFast) {
                 throw new Error(`Context gathering failed (fail-fast): ${error instanceof Error ? error.message : String(error)}`)
@@ -816,9 +1002,13 @@ Previous rounds discussion:`
 
     const reviewerIds = [...lastMessages.keys()].join(', ')
 
-    // Extract changed files and valid line ranges from the diff to constrain structurizer output
-    const changedFiles = extractChangedFiles(this.taskPrompt)
-    const diffLineRanges = extractDiffLineRanges(this.taskPrompt)
+    // Extract changed files and valid line ranges from the diff to constrain structurizer output.
+    // In CLI mode the task prompt is only a PR link, so this falls back to the diff the
+    // caller fetched separately — without it the whole constraint block below is skipped
+    // and the structurizer invents line numbers GitHub then rejects.
+    const diffSource = this.options.diffText || this.taskPrompt
+    const changedFiles = extractChangedFiles(diffSource)
+    const diffLineRanges = extractDiffLineRanges(diffSource)
     let changedFilesConstraint = ''
     if (changedFiles.length > 0) {
       changedFilesConstraint = `\n- IMPORTANT: Only reference files that are in the PR diff. Changed files: ${changedFiles.join(', ')}`
@@ -896,11 +1086,17 @@ Use reviewer IDs: ${reviewerIds}`
 
         const parsed = parseReviewerOutput(response)
         if (parsed && parsed.issues.length > 0) {
-          return parsed.issues.map(issue => ({
+          const merged = parsed.issues.map(issue => ({
             ...issue,
             raisedBy: issue.raisedBy || ['summarizer'],
             descriptions: [issue.description]
           }))
+          // Second line of defence: the prompt asks for in-diff lines, this enforces it.
+          const { issues: clamped, adjusted } = clampIssuesToDiff(merged, diffSource)
+          if (adjusted > 0) {
+            logger.warn(`Structurizer produced ${adjusted} line number(s) outside the diff; dropped those line refs`)
+          }
+          return clamped
         }
         // Parse failed — will retry if attempts remain
       } catch {
@@ -1073,89 +1269,51 @@ New issues use \`verdict: "new"\`. Same evidence rules apply.
     const messages: Message[] = [{ role: 'user', content: prompt }]
     const systemPrompt = this.withLang(this.auditor.systemPrompt)
 
-    try {
-      const response = await this.auditor.provider.chat(messages, systemPrompt)
-      this.trackTokens('verifier', prompt + (systemPrompt || ''), response)
+    // One retry: a malformed audit gets its own bad output fed back before we give up.
+    // Failing here used to mean "post everything unverified", which is the worst
+    // possible behaviour for the stage whose whole job is filtering false positives.
+    let lastBadOutput = ''
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const attemptPrompt = attempt === 1
+        ? prompt
+        : `${prompt}\n\n---\nYour previous response could not be parsed as the required JSON. Output ONLY the fenced JSON block described above, with one entry per input issue. Previous response started with:\n${lastBadOutput.slice(0, 500)}`
 
-      // Parse the audit result
-      const jsonMatch = response.match(/```json\s*([\s\S]*?)\s*```/)
-      const jsonStr = jsonMatch?.[1] || response
-      const match = jsonStr.match(/\{[\s\S]*"verifiedIssues"\s*:\s*\[[\s\S]*?\]\s*\}/)
-      if (!match) {
-        logger.warn('Audit returned unparseable output; keeping original issues')
-        return issues
+      let response: string
+      try {
+        response = await this.auditor.provider.chat([{ role: 'user', content: attemptPrompt }], systemPrompt)
+        this.trackTokens('verifier', attemptPrompt + (systemPrompt || ''), response)
+      } catch (err) {
+        logger.warn(`Audit call failed (attempt ${attempt}/2):`, err)
+        lastBadOutput = String(err)
+        continue
       }
 
-      const parsed = JSON.parse(match[0])
-      if (!Array.isArray(parsed.verifiedIssues)) {
-        logger.warn('Audit verifiedIssues field is not an array; keeping originals')
-        return issues
+      const verdicts = parseAuditVerdicts(response)
+      if (!verdicts) {
+        logger.warn(`Audit returned unparseable output (attempt ${attempt}/2)`)
+        lastBadOutput = response
+        continue
       }
 
-      type V = {
-        verdict: 'keep' | 'rewrite' | 'drop' | 'new'
-        originalIndex?: number
-        file?: string
-        line?: number
-        severity?: MergedIssue['severity']
-        category?: string
-        body?: string
-        evidence?: string
-        reason?: string
+      const rec = reconcileAuditVerdicts(issues, verdicts)
+      const s = rec.stats
+      logger.info(`Audit: ${s.kept} kept, ${s.rewrites} rewritten, ${s.dropped} dropped, ${s.added} new, ${s.unanswered} unanswered`)
+      for (const d of rec.dropReasons) {
+        logger.info(`Audit drop [${d.index}] "${d.title.slice(0, 80)}" — ${d.reason.slice(0, 200)}`)
       }
-
-      const result: MergedIssue[] = []
-      const droppedOrigIdx = new Set<number>()
-      let dropCount = 0, rewriteCount = 0, newCount = 0
-
-      for (const v of parsed.verifiedIssues as V[]) {
-        if (v.verdict === 'drop') {
-          if (typeof v.originalIndex === 'number') droppedOrigIdx.add(v.originalIndex)
-          dropCount++
-          continue
+      if (s.unanswered > 0) {
+        // The auditor skipped these. They stay in, but flagged: they went out unverified.
+        logger.warn(`Audit did not answer ${s.unanswered} of ${issues.length} issues (indexes ${rec.unanswered.join(', ')}); keeping them as unverified`)
+        for (const i of rec.unanswered) {
+          const issue = rec.issues.find(x => x.title === issues[i].title)
+          if (issue) issue.verdict = 'unverified'
         }
-        if (v.verdict === 'new') {
-          if (!v.file || typeof v.line !== 'number' || !v.body || !v.evidence) continue
-          result.push({
-            severity: (v.severity || 'low'),
-            category: v.category || 'general',
-            file: v.file,
-            line: v.line,
-            title: v.body.split(/[.!?\n]/)[0].slice(0, 100),
-            description: v.body,
-            raisedBy: ['auditor'],
-            descriptions: [v.body],
-            verdict: 'new',
-            body: v.body,
-            evidence: v.evidence
-          })
-          newCount++
-          continue
-        }
-        // keep or rewrite
-        if (typeof v.originalIndex !== 'number' || v.originalIndex < 0 || v.originalIndex >= issues.length) {
-          continue
-        }
-        const orig = issues[v.originalIndex]
-        if (droppedOrigIdx.has(v.originalIndex)) continue  // already dropped, skip duplicate
-        const merged: MergedIssue = {
-          ...orig,
-          severity: v.severity || orig.severity,
-          file: v.file || orig.file,
-          line: typeof v.line === 'number' ? v.line : orig.line,
-          verdict: v.verdict,
-          body: v.body,  // undefined for keep-no-change is fine
-          evidence: v.evidence
-        }
-        if (v.verdict === 'rewrite') rewriteCount++
-        result.push(merged)
       }
-
-      logger.info(`Audit: ${result.length - newCount} kept/rewritten (${rewriteCount} rewrites), ${dropCount} dropped, ${newCount} new`)
-      return result
-    } catch (err) {
-      logger.warn('Audit failed; returning original issues:', err)
-      return issues
+      return rec.issues
     }
+
+    // Both attempts failed. Do NOT pretend these issues were verified.
+    logger.error(`Audit failed after 2 attempts; marking all ${issues.length} issues as unverified`)
+    return issues.map(i => ({ ...i, verdict: 'unverified' as const }))
   }
 }

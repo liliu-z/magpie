@@ -56,6 +56,15 @@ export interface OrchestratorOptions {
   onPostAnalysisQA?: () => Promise<{ target: string; question: string } | null>
   onContextGathered?: (context: GatheredContext) => void  // Context gathering complete callback
   interruptState?: { interrupted: boolean }  // External interrupt signal (e.g., Ctrl+C)
+  // Unified diff of the change under review, fetched by the caller. Used ONLY to
+  // constrain and validate structurizer output (which files/lines may be cited) —
+  // it is never added to the reviewer prompts. Required for the line-range guard to
+  // work in CLI mode, where reviewers fetch the diff themselves and the task prompt
+  // is just a PR link.
+  diffText?: string
+  // Let the context gatherer investigate with its own tools instead of being fed a diff.
+  // Only meaningful for tool-capable (CLI) context models.
+  contextAgentMode?: boolean
   skipConclusion?: boolean  // Skip getFinalConclusion + old verifyConclusion (bot mode)
   failFast?: boolean  // Abort the entire flow as soon as any reviewer (or context gatherer) fails
 }
@@ -87,7 +96,9 @@ export interface MergedIssue extends ReviewIssue {
   descriptions: string[]   // each reviewer's description
 
   // Populated by the audit stage (verifyIssues). Absent if audit didn't run.
-  verdict?: 'keep' | 'rewrite' | 'drop' | 'new'
+  // 'unverified' = audit ran but did not return a verdict for this issue (it failed
+  // to parse, or it skipped the issue). Treat as NOT fact-checked.
+  verdict?: 'keep' | 'rewrite' | 'drop' | 'new' | 'unverified'
   body?: string            // Audit-authored post text (replaces description for posting). Plain prose.
   evidence?: string        // Audit's cited code reference (file:line + quote)
   auditReason?: string     // For verdict=drop: drop reason category

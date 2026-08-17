@@ -10,11 +10,13 @@ import { createInterface } from 'readline'
 import { marked } from 'marked'
 import TerminalRenderer from 'marked-terminal'
 import { ContextGatherer } from '../context-gatherer/index.js'
+import { formatCallChainForReviewer } from '../context-gatherer/collectors/reference-collector.js'
 import type { ReviewTarget, ReviewerSessionState } from './review/types.js'
 import { fixMarkdown, getRandomJoke, formatMarkdown } from './review/utils.js'
 import { selectReviewers, interactiveFollowUpQA, interactiveCommentReview, interactivePostReviewDiscussion, interactiveGeneralDiscussion } from './review/interactive.js'
 import { handleRepoReview } from './review/repo-review.js'
 import { handleListSessions, handleResumeSession, handleExportSession } from './review/session-cmds.js'
+import { runLedgerReview } from './review/ledger-run.js'
 import { filterDiff } from '../utils/diff-filter.js'
 import { fetchLargePRDiff } from '../utils/large-diff.js'
 
@@ -31,11 +33,13 @@ export const reviewCommand = new Command('review')
   .description('Review code changes with multiple AI reviewers')
   .argument('[pr]', 'PR number or URL (optional if using --local, --branch, or --files)')
   .option('-c, --config <path>', 'Path to config file')
-  .option('-r, --rounds <number>', 'Maximum debate rounds', '5')
+  .option('-r, --rounds <number>', 'Maximum debate rounds (default: defaults.max_rounds from config)')
   .option('-i, --interactive', 'Interactive mode (pause between turns)')
   .option('-o, --output <file>', 'Output to file instead of stdout')
   .option('-f, --format <format>', 'Output format (markdown|json)', 'markdown')
   .option('--no-converge', 'Disable early stop when reviewers reach consensus')
+  .option('--ledger', 'Use the issue-ledger flow: independent finders, cross-adjudication, verifier + gap finder')
+  .option('--shard-size <number>', 'Files per review shard in ledger mode (default: 8)')
   .option('-l, --local', 'Review local uncommitted changes (staged + unstaged)')
   .option('-b, --branch [base]', 'Review current branch vs base (default: main)')
   .option('--files <files...>', 'Review specific files')
@@ -248,10 +252,20 @@ export const reviewCommand = new Command('review')
         const allCli = allModels.every(m => isCliModel(m))
 
         let prPrompt: string
+        let constraintDiff = ''
         if (allCli) {
           // CLI mode: reviewers fetch diff and read code themselves
           console.log(chalk.dim(`  CLI-only reviewers detected — reviewers will fetch diff and read code directly`))
           prPrompt = `Please review ${prUrl}.\n\nTitle: ${prTitle}\n\nDescription:\n${prBody}\n\nYou have full access to the repository. Use \`gh pr diff ${prUrl}\` to get the diff, then use Read/Grep tools to examine the actual source files for context. Review every changed file and function systematically.`
+          // Fetch the diff anyway — NOT for the reviewers, but so the structurizer's
+          // "only cite files/lines in the diff" constraint has something to work with.
+          // Without it that guard is skipped entirely and we emit uncommentable line numbers.
+          try {
+            constraintDiff = execSync(`gh pr diff ${prUrl}`, { encoding: 'utf-8', timeout: 60000, maxBuffer: 10 * 1024 * 1024 })
+            constraintDiff = filterDiff(constraintDiff, config.defaults.diff_exclude)
+          } catch {
+            console.log(chalk.yellow(`  Could not fetch diff for line validation — issue line numbers will be unconstrained`))
+          }
         } else {
           // API mode: pre-fetch diff and embed in prompt
           let prDiff = ''
@@ -307,7 +321,8 @@ export const reviewCommand = new Command('review')
           type: 'pr',
           label: `PR #${prNumber}`,
           prompt: prPrompt,
-          repo: prRepo
+          repo: prRepo,
+          diffText: constraintDiff || undefined
         }
       } else {
         spinner.fail('Error')
@@ -395,9 +410,13 @@ export const reviewCommand = new Command('review')
       // Create context gatherer (if enabled)
       let contextGatherer: ContextGatherer | undefined
       const contextEnabled = !options.skipContext && (config.contextGatherer?.enabled !== false)
+      const contextModel = config.contextGatherer?.model || config.analyzer.model
+      // Agent mode when the context model has tools AND there's no diff embedded in the
+      // prompt: the diff-driven collectors would find nothing to work with, and the model
+      // would fill the gap by inventing call chains. With tools it can just go look.
+      const contextAgentMode = isCliModel(contextModel) && !target.prompt.includes('```diff')
 
       if (contextEnabled) {
-        const contextModel = config.contextGatherer?.model || config.analyzer.model
         contextGatherer = new ContextGatherer({
           provider: createProvider(contextModel, config),
           language: config.defaults.language,
@@ -410,16 +429,23 @@ export const reviewCommand = new Command('review')
       }
 
       const isSoloReview = reviewers.length === 1
-      const maxRounds = isSoloReview ? 1 : parseInt(options.rounds, 10)
+      // --rounds wins if given; otherwise the config value actually applies. It used to be
+      // shadowed by a hardcoded CLI default of 5, which made defaults.max_rounds dead config.
+      const configuredRounds = options.rounds ? parseInt(options.rounds, 10) : config.defaults.max_rounds
+      const maxRounds = isSoloReview ? 1 : configuredRounds
+      const roundsSource = isSoloReview ? 'solo review' : (options.rounds ? '--rounds' : 'config')
       // Convergence: disable for solo review; otherwise default from config, CLI can override with --no-converge
       const checkConvergence = !isSoloReview && options.converge !== false && (config.defaults.check_convergence !== false)
 
       console.log()
       console.log(chalk.bgBlue.white.bold(` ${target.label} Review `))
       console.log(chalk.dim(`├─ Reviewers: ${selectedIds.map(id => `${chalk.cyan(id)} ${chalk.gray('(' + config.reviewers[id].model + ')')}`).join(', ')}`))
-      console.log(chalk.dim(`├─ Max rounds: ${maxRounds}`))
+      console.log(chalk.dim(`├─ Max rounds: ${maxRounds} (${roundsSource})`))
       console.log(chalk.dim(`├─ Convergence: ${checkConvergence ? 'enabled' : 'disabled'}`))
-      console.log(chalk.dim(`└─ Context gathering: ${contextEnabled ? 'enabled' : 'disabled'}`))
+      // Log every stage's effective model — without this, results can't be attributed to a
+      // model after the fact, which makes any before/after comparison unfalsifiable.
+      console.log(chalk.dim(`├─ Stage models: analyzer=${config.analyzer.model} summarizer=${config.summarizer.model} audit=${config.audit?.model || config.summarizer.model + ' (fallback)'}`))
+      console.log(chalk.dim(`└─ Context gathering: ${contextEnabled ? (contextAgentMode ? 'agent mode' : 'diff mode') : 'disabled'}`))
 
       let currentReviewer = ''
       let currentRound = 1
@@ -462,6 +488,8 @@ export const reviewCommand = new Command('review')
         maxRounds,
         interactive: options.interactive,
         checkConvergence,
+        diffText: target.diffText,
+        contextAgentMode,
         language: config.defaults.language,
         interruptState,
         skipConclusion: options.conclusion === false,
@@ -641,7 +669,69 @@ export const reviewCommand = new Command('review')
         }
       }, contextGatherer, auditor)
 
-      const result = await orchestrator.runStreaming(target.label, target.prompt)
+      let result: Awaited<ReturnType<typeof orchestrator.runStreaming>>
+
+      if (options.ledger) {
+        // Ledger flow: findings are structured from the moment they are raised, finders work
+        // independently in round 1, and the verify/gap-find powers are held by separate calls.
+        if (!target.diffText) {
+          spinner.fail('Error')
+          console.error(chalk.red('Ledger mode needs the diff to plan shards and could not fetch it.'))
+          rl?.close()
+          process.exit(1)
+        }
+        const gapFinderCfg = config.gapFinder
+        if (!gapFinderCfg) {
+          console.log(chalk.yellow('  No `gapFinder` configured — running without gap finding.'))
+          console.log(chalk.dim('  Configure one on a different model family from the finders; the verifier cannot add findings.'))
+        }
+        const judgeCfg = config.judge
+        if (!judgeCfg) {
+          console.log(chalk.yellow('  No `judge` configured — findings will be merged by text similarity.'))
+          console.log(chalk.dim('  A judge groups paraphrases of the same bug that word overlap misses.'))
+        }
+
+        // Facts only. The analyzer is deliberately NOT run here: its output says what the
+        // change is for and where to look, and handing every finder the same framing is what
+        // makes round-1 agreement meaningless. Call sites are facts, so they are safe to share.
+        let sharedContext: string | undefined
+        if (contextGatherer) {
+          try {
+            spinner.text = 'Gathering call sites...'
+            const gathered = contextAgentMode
+              ? await contextGatherer.gatherViaAgent(target.prompt, target.label, 'main', target.label)
+              : await contextGatherer.gather(target.diffText, target.label, 'main')
+            if (gathered.rawReferences?.length) {
+              sharedContext = formatCallChainForReviewer(gathered.rawReferences)
+            }
+          } catch (err) {
+            // Context is an accelerator, not a prerequisite — finders have tools of their own
+            console.log(chalk.dim(`  Context gathering skipped: ${err instanceof Error ? err.message : String(err)}`))
+          }
+        }
+
+        result = await runLedgerReview({
+          finders: reviewers,
+          verifier: auditor || summarizer,
+          gapFinder: gapFinderCfg
+            ? { id: 'gap-finder', provider: createProvider(gapFinderCfg.model, config), systemPrompt: gapFinderCfg.prompt }
+            : undefined,
+          judge: judgeCfg
+            ? { id: 'judge', provider: createProvider(judgeCfg.model, config), systemPrompt: judgeCfg.prompt }
+            : undefined,
+          label: target.label,
+          target: target.prompt.match(/https:\/\/github\.com\/\S+?\/pull\/\d+/)?.[0] || target.label,
+          targetDescription: target.prompt.slice(0, 4000),
+          diffText: target.diffText,
+          maxRounds,
+          maxFilesPerShard: options.shardSize ? parseInt(options.shardSize, 10) : undefined,
+          language: config.defaults.language,
+          sharedContext,
+          interruptState,
+        })
+      } else {
+        result = await orchestrator.runStreaming(target.label, target.prompt)
+      }
 
       // Flush any remaining buffered content
       flushBuffer()

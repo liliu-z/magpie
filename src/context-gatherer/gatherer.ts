@@ -14,6 +14,7 @@ import { collectReferences, extractSymbolsFromDiff } from './collectors/referenc
 import { collectHistory } from './collectors/history-collector.js'
 import { collectDocs } from './collectors/docs-collector.js'
 import { buildAnalysisPrompt } from './prompts/analysis-prompt.js'
+import { buildAgentContextPrompt } from './prompts/agent-prompt.js'
 
 const DEFAULT_OPTIONS: Required<GathererOptions> = {
   callChain: {
@@ -61,6 +62,49 @@ export class ContextGatherer {
     }
 
     return files
+  }
+
+  /**
+   * Agent-mode gathering: hand a tool-capable model the review target and let it go find
+   * the context itself.
+   *
+   * This exists because the deterministic path below is driven entirely by the changed-file
+   * list parsed out of a diff. In CLI mode there is no diff — reviewers fetch it themselves
+   * — so that path collects nothing while still stuffing every repo doc into the prompt, and
+   * the model fills the resulting void with invented call chains. An agent can just go look.
+   */
+  async gatherViaAgent(
+    target: string,
+    prNumber: string,
+    baseBranch: string = 'main',
+    targetDescription?: string
+  ): Promise<GatheredContext> {
+    const prompt = buildAgentContextPrompt({
+      target,
+      targetDescription,
+      maxFilesToRead: this.options.callChain.maxFilesToAnalyze ?? DEFAULT_OPTIONS.callChain.maxFilesToAnalyze!,
+      maxRelatedPRs: this.options.history.maxPRs ?? DEFAULT_OPTIONS.history.maxPRs!,
+      historyDays: this.options.history.maxDays ?? DEFAULT_OPTIONS.history.maxDays!,
+    }, this.language)
+
+    const response = await this.provider.chat(
+      [{ role: 'user', content: prompt }],
+      'You are a senior software architect gathering review context. You investigate with tools and report only what you verified. Respond in JSON format only.'
+    )
+
+    const parsed = this.parseAIResponse(response)
+
+    return {
+      affectedModules: parsed.affectedModules,
+      callChain: parsed.callChain,
+      relatedPRs: [],          // agent mode reports history inside the summary, not as structured PRs
+      designPatterns: parsed.designPatterns,
+      summary: parsed.summary,
+      gatheredAt: new Date(),
+      prNumber,
+      baseBranch,
+      rawReferences: [],
+    }
   }
 
   /**
