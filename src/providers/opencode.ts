@@ -32,6 +32,9 @@ export function isOpencodeTransientError(error: unknown): boolean {
   const msg = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase()
   return msg.includes('database is locked')
     || msg.includes('database table is locked')
+    // Seen when its store had grown to gigabytes: contention surfaces as a generic statement
+    // failure rather than a lock error, which used to bypass retry entirely and fail the shard
+    || msg.includes('failed to execute statement')
     || msg.includes('sqlite_busy')
     || msg.includes('timeout')
     || msg.includes('econnreset')
@@ -143,6 +146,9 @@ export class OpenCodeProvider implements AIProvider {
   private session = new CliSessionHelper()
   // Session id minted by opencode; undefined until the first run reports one
   private opencodeSessionId?: string
+  // Escape hatch for anyone who wants to inspect a review's session afterwards, at the cost
+  // of growing opencode's store without bound — see endSession
+  private keepSessions = process.env.MAGPIE_KEEP_OPENCODE_SESSIONS === '1'
 
   get sessionId() { return this.opencodeSessionId }
 
@@ -162,9 +168,38 @@ export class OpenCodeProvider implements AIProvider {
     this.opencodeSessionId = undefined
   }
 
+  /**
+   * End the session and delete it from opencode's store.
+   *
+   * opencode records a `message.updated` event on every growth of an assistant message, and
+   * each event carries the whole message so far — so one long agentic session costs roughly
+   * the square of its final size on disk. A review is exactly that shape, and measured here
+   * it cost about 900MB of event log per PR. Nothing in opencode expires it (there is no
+   * retention setting), so a few reviews are enough to push its SQLite store into the
+   * gigabytes, at which point every writer starts losing to lock contention and reviews fail
+   * with "database is locked" or "Failed to execute statement".
+   *
+   * magpie's sessions are single-use, so it owns the cleanup. Best-effort and detached: a
+   * failed cleanup must never fail the review, but skipping it degrades the next run.
+   */
   endSession(): void {
+    const id = this.opencodeSessionId
     this.session.end()
     this.opencodeSessionId = undefined
+    if (!id || this.keepSessions) return
+
+    try {
+      const child = spawn('opencode', ['session', 'delete', id], {
+        cwd: this.cwd,
+        env: { ...process.env, PWD: this.cwd },
+        stdio: 'ignore',
+        detached: true,
+      })
+      child.on('error', () => {})
+      child.unref()
+    } catch {
+      // Cleanup is opportunistic; the review has already produced its result
+    }
   }
 
   /** Resume only when a session is active AND opencode has given us an id to resume */

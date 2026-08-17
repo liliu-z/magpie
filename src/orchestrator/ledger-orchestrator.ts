@@ -62,6 +62,28 @@ import { logger } from '../utils/logger.js'
 // If two identical finders genuinely duplicate each other, `finderStats.unique` says so, and
 // the answer is fewer finders — not different questions.
 
+/**
+ * Ceiling on simultaneous CLI agents in round 1.
+ *
+ * Four is not a tuning constant so much as an admission: every CLI provider funnels through
+ * one long-lived local process and, in opencode's case, one shared database. Twelve at once
+ * did not run twelve times faster — eleven of them failed outright.
+ */
+export const DEFAULT_MAX_CONCURRENCY = 4
+
+/** Run thunks with at most `limit` in flight. Rejections are already handled per job. */
+async function runWithLimit(jobs: Array<() => Promise<void>>, limit: number): Promise<void> {
+  const width = Math.max(1, Math.min(limit, jobs.length))
+  let next = 0
+  const workers = Array.from({ length: width }, async () => {
+    while (next < jobs.length) {
+      const job = jobs[next++]
+      await job()
+    }
+  })
+  await Promise.all(workers)
+}
+
 export interface LedgerOrchestratorOptions {
   /** Total rounds including round 1 and 2. Rounds past 2 only handle open entries. */
   maxRounds?: number
@@ -70,6 +92,14 @@ export interface LedgerOrchestratorOptions {
   gapFinderEnabled?: boolean
   /** Facts gathered once and given to every finder. Facts only — see `buildFinderPrompt`. */
   sharedContext?: string
+  /**
+   * Cap on simultaneous round-1 jobs. Round 1 is finders × shards, so it is the one stage
+   * whose width grows with the size of the change: a 29-file PR fanned out to 12 concurrent
+   * CLI agents and 11 of them died. Agents are expensive processes with shared state behind
+   * them, and beyond a handful the extra parallelism buys latency at the cost of completing
+   * at all.
+   */
+  maxConcurrency?: number
   onStage?: (stage: string, detail?: string) => void
   interruptState?: { interrupted: boolean }
 }
@@ -314,7 +344,7 @@ export class LedgerOrchestrator {
     this.options.onStage?.('round1', `${this.finders.length} finder(s) × ${shards.length || 1} shard(s)`)
 
     const raw: RawFinding[] = []
-    const jobs: Array<Promise<void>> = []
+    const jobs: Array<() => Promise<void>> = []
     const scopes: Array<Shard | undefined> = shards.length > 0 ? shards : [undefined]
     // Per-finder ref counters. Shards finish in whatever order they finish, so a shared
     // counter would hand out refs that depend on timing; these stay stable per finder.
@@ -352,11 +382,11 @@ export class LedgerOrchestrator {
             logger.warn(`[${finder.id}] failed on shard ${shard?.id ?? 'all'}:`, err)
             if (shard) coverage.markFailed(shard.id, finder.id)
           }
-        })())
+        }))
       }
     }
 
-    await Promise.all(jobs)
+    await runWithLimit(jobs, this.options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY)
     return raw
   }
 

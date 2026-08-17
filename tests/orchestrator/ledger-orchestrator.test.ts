@@ -56,6 +56,10 @@ const adjudications = (...a: Record<string, unknown>[]) =>
 const verdicts = (...v: Record<string, unknown>[]) =>
   '```json\n' + JSON.stringify({ verdicts: v }) + '\n```'
 
+
+const WIDE_DIFF = [1,2,3,4,5,6].map(i =>
+  `diff --git a/mod${i}/f.go b/mod${i}/f.go\n@@ -1,2 +1,5 @@\n ctx`).join('\n')
+
 const DIFF = [
   'diff --git a/internal/query/a.go b/internal/query/a.go',
   '@@ -1,2 +95,20 @@',
@@ -584,5 +588,42 @@ describe('toMergedIssues', () => {
     expect(issues[0].severity).toBe('high')
     expect(issues[0].file).toBe('internal/query/a.go')
     expect(issues[0].evidence).toBe('checked at a.go:100')
+  })
+})
+
+describe('round-1 concurrency', () => {
+  // A 29-file PR fanned out to 12 simultaneous CLI agents and 11 of them died. Round 1 is the
+  // only stage whose width grows with the size of the change, so it is the only one capped.
+  it('never runs more finder×shard jobs at once than the cap', async () => {
+    let inFlight = 0, peak = 0
+    const slow = (id: string) => reviewer(id, async (p: string) => {
+      if (!isFinderPrompt(p)) return adjudications()
+      inFlight++; peak = Math.max(peak, inFlight)
+      await new Promise(r => setTimeout(r, 5))
+      inFlight--
+      return findings()
+    })
+    const a = slow('finderA'), b = slow('finderB')
+    const verifier = reviewer('verifier', () => verdicts())
+
+    // 2 finders × 6 shards = 12 jobs, capped at 3
+    const orch = new LedgerOrchestrator([a, b], verifier, undefined,
+      { maxRounds: 2, maxFilesPerShard: 1, gapFinderEnabled: false, maxConcurrency: 3 })
+    await orch.run('PR #1', 'title', WIDE_DIFF)
+
+    expect(peak).toBeLessThanOrEqual(3)
+    // and every job still ran
+    expect((a.provider as ScriptedProvider).prompts.filter(isFinderPrompt).length).toBe(6)
+    expect((b.provider as ScriptedProvider).prompts.filter(isFinderPrompt).length).toBe(6)
+  })
+
+  it('still completes every job when the cap exceeds the job count', async () => {
+    const a = reviewer('finderA', p => isFinderPrompt(p) ? findings(findingJson()) : adjudications())
+    const verifier = reviewer('verifier', () => verdicts({ id: 'F1', verdict: 'keep', evidence: 'checked' }))
+
+    const orch = new LedgerOrchestrator([a], verifier, undefined,
+      { maxRounds: 2, gapFinderEnabled: false, maxConcurrency: 99 })
+    const result = await orch.run('PR #1', 'title', DIFF)
+    expect(result.entries).toHaveLength(1)
   })
 })
