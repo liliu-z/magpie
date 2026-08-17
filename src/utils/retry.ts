@@ -9,7 +9,7 @@ export interface RetryOptions {
 const DEFAULT_BACKOFF = [1000, 2000, 4000]
 
 /** Check if an error is transient (timeout, connection reset, 429, 5xx) */
-function isTransientError(error: unknown): boolean {
+export function isTransientError(error: unknown): boolean {
   if (error == null) return false
 
   const err = error as { code?: string; status?: number; statusCode?: number; message?: string }

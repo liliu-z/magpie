@@ -2,7 +2,25 @@ import { spawn } from 'child_process'
 import type { AIProvider, Message, CliProviderOptions, ChatOptions } from './types.js'
 import { CliSessionHelper } from './session-helper.js'
 import { preparePromptForCli } from '../utils/prompt-file.js'
-import { withRetry } from '../utils/retry.js'
+import { withRetry, isTransientError } from '../utils/retry.js'
+import { logger } from '../utils/logger.js'
+
+/**
+ * Transient for the claude CLI specifically.
+ *
+ * The shared check covers timeouts, connection resets and 429/5xx. These extras are the
+ * shapes the CLI actually prints: the failure reaches us as a non-zero exit plus a line of
+ * stderr, never as a structured status, so 529 (Anthropic's "overloaded") and the CLI's own
+ * connection wording have to be matched as text.
+ */
+export function isClaudeTransientError(error: unknown): boolean {
+  if (isTransientError(error)) return true
+  const msg = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase()
+  return msg.includes('overloaded')
+    || msg.includes('529')
+    || msg.includes('connection error')
+    || msg.includes('internal server error')
+}
 
 export interface ClaudeArgsOptions {
   effort: string
@@ -57,6 +75,8 @@ export class ClaudeCodeProvider implements AIProvider {
   // scale; config lowers it per role when a stage does not need to pay for that.
   private effort: string
   private session = new CliSessionHelper()
+  /** Protected so tests can collapse the real waits; see chatStream */
+  protected streamBackoffMs = [1000, 3000, 6000]
 
   get sessionId() { return this.session.sessionId }
 
@@ -95,18 +115,39 @@ export class ClaudeCodeProvider implements AIProvider {
     }
   }
 
+  /**
+   * Retry before the first chunk only. Once a chunk is out it has been printed to the user,
+   * and re-running the prompt would duplicate visible output — so a mid-stream failure is
+   * terminal by design, not by oversight.
+   *
+   * `chat` has had this via `withRetry` all along; the streaming path had nothing, so a
+   * blip killed the whole reviewer. Which flows survived a transient error came down to
+   * which method they happened to call.
+   */
   async *chatStream(messages: Message[], systemPrompt?: string): AsyncGenerator<string, void, unknown> {
-    const prompt = this.session.shouldSendFullHistory()
-      ? this.session.buildPrompt(messages, systemPrompt)
-      : this.session.buildPromptLastOnly(messages)
-    try {
-      yield* this.runClaudeStream(prompt, systemPrompt)
-      this.session.markMessageSent()
-    } catch (err) {
-      // Reset to a fresh session ID so the next round doesn't try to --resume
-      // or --session-id a dead/stuck session
-      this.session.start(this.session.sessionName)
-      throw err
+    const backoffMs = this.streamBackoffMs
+    for (let attempt = 0; ; attempt++) {
+      // Built inside the loop: a retry starts a fresh session, and the prompt has to match
+      // that — a resumed-session prompt carries only the last message
+      const prompt = this.session.shouldSendFullHistory()
+        ? this.session.buildPrompt(messages, systemPrompt)
+        : this.session.buildPromptLastOnly(messages)
+      let emitted = false
+      try {
+        for await (const chunk of this.runClaudeStream(prompt, systemPrompt)) {
+          emitted = true
+          yield chunk
+        }
+        this.session.markMessageSent()
+        return
+      } catch (err) {
+        // Reset to a fresh session ID either way, so neither the retry nor the next round
+        // tries to --resume a dead or stuck session
+        this.session.start(this.session.sessionName)
+        if (emitted || attempt >= backoffMs.length || !isClaudeTransientError(err)) throw err
+        logger.warn(`claude stream failed before output (attempt ${attempt + 1}/${backoffMs.length + 1}), retrying: ${err instanceof Error ? err.message : String(err)}`)
+        await new Promise(r => setTimeout(r, backoffMs[attempt]))
+      }
     }
   }
 
@@ -169,7 +210,7 @@ export class ClaudeCodeProvider implements AIProvider {
     })
   }
 
-  private async *runClaudeStream(prompt: string, systemPrompt?: string): AsyncGenerator<string, void, unknown> {
+  protected async *runClaudeStream(prompt: string, systemPrompt?: string): AsyncGenerator<string, void, unknown> {
     const { prompt: stdinPrompt, cleanup } = preparePromptForCli(prompt)
 
     const args = buildClaudeArgs({
