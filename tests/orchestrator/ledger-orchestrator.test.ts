@@ -460,6 +460,124 @@ describe('LedgerOrchestrator with a judge', () => {
   })
 })
 
+describe('lenses', () => {
+  it('gives each finder a different angle by default', async () => {
+    const a = reviewer('finderA', p => isFinderPrompt(p) ? findings() : adjudications())
+    const b = reviewer('finderB', p => isFinderPrompt(p) ? findings() : adjudications())
+    const verifier = reviewer('verifier', () => verdicts())
+
+    const orch = new LedgerOrchestrator([a, b], verifier, undefined, { maxRounds: 2, gapFinderEnabled: false })
+    await orch.run('PR #1', 'title', DIFF)
+
+    const [pa] = (a.provider as ScriptedProvider).prompts
+    const [pb] = (b.provider as ScriptedProvider).prompts
+    expect(pa).toContain('Where to go deeper')
+    expect(pa).not.toBe(pb)
+  })
+
+  it('lets config override the angle', async () => {
+    const a = { ...reviewer('finderA', p => isFinderPrompt(p) ? findings() : adjudications()), lens: 'Focus on the billing rounding rules.' }
+    const verifier = reviewer('verifier', () => verdicts())
+
+    const orch = new LedgerOrchestrator([a], verifier, undefined, { maxRounds: 2, gapFinderEnabled: false })
+    await orch.run('PR #1', 'title', DIFF)
+
+    expect((a.provider as ScriptedProvider).prompts[0]).toContain('Focus on the billing rounding rules.')
+  })
+
+  // The angle must widen where a finder digs, never narrow what it opens — a blind spot is
+  // the one failure no later stage can recover from
+  it('states that the angle is not a filter', async () => {
+    const a = reviewer('finderA', p => isFinderPrompt(p) ? findings() : adjudications())
+    const verifier = reviewer('verifier', () => verdicts())
+
+    const orch = new LedgerOrchestrator([a], verifier, undefined, { maxRounds: 2, gapFinderEnabled: false })
+    await orch.run('PR #1', 'title', DIFF)
+
+    const prompt = (a.provider as ScriptedProvider).prompts[0]
+    expect(prompt).toContain('Sweep your whole scope first')
+    expect(prompt).toContain('It is not a filter')
+  })
+})
+
+describe('per-role accounting', () => {
+  it('separates what each finder found alone from what they shared', async () => {
+    const shared = findingJson()
+    const a = reviewer('finderA', p => isFinderPrompt(p)
+      ? findings(shared, findingJson({ file: 'internal/store/b.go', line: 12, title: 'missing retry on upload' }))
+      : adjudications())
+    const b = reviewer('finderB', p => isFinderPrompt(p) ? findings(shared) : adjudications())
+    const judge = reviewer('judge', p => isClusterPrompt(p)
+      ? clusters({ members: ['A1', 'B1'], canonical: 'A1' }, { members: ['A2'], canonical: 'A2' })
+      : rulings())
+    const verifier = reviewer('verifier', () => verdicts(
+      { id: 'F1', verdict: 'keep', evidence: 'checked' },
+      { id: 'F2', verdict: 'keep', evidence: 'checked' },
+    ))
+
+    const orch = new LedgerOrchestrator([a, b], verifier, undefined, { maxRounds: 2, gapFinderEnabled: false }, judge)
+    const result = await orch.run('PR #1', 'title', DIFF)
+
+    const statsA = result.finderStats.find(s => s.finderId === 'finderA')!
+    const statsB = result.finderStats.find(s => s.finderId === 'finderB')!
+    expect(statsA).toMatchObject({ raised: 2, unique: 1, shared: 1 })
+    expect(statsB).toMatchObject({ raised: 1, unique: 0, shared: 1 })
+  })
+
+  it('reports no gap-finder stats when none ran', async () => {
+    const a = reviewer('finderA', p => isFinderPrompt(p) ? findings(findingJson()) : adjudications())
+    const verifier = reviewer('verifier', () => verdicts({ id: 'F1', verdict: 'keep', evidence: 'checked' }))
+
+    const orch = new LedgerOrchestrator([a], verifier, undefined, { maxRounds: 2, gapFinderEnabled: false })
+    const result = await orch.run('PR #1', 'title', DIFF)
+
+    expect(result.gapFinderStats).toBeUndefined()
+  })
+
+  // Whether this role earns its cost has to be answerable from one run's output
+  it('accounts for the gap finder apart from the finders', async () => {
+    const a = reviewer('finderA', p => isFinderPrompt(p) ? findings(findingJson()) : adjudications())
+    const gap = reviewer('gapFinder', () => findings(
+      findingJson({ file: 'internal/store/b.go', line: 12, title: 'unbounded retry loop on upload' }),
+      findingJson({ file: 'internal/store/b.go', line: 40, title: 'temp file is never removed on error' }),
+    ))
+    let verifyCalls = 0
+    const verifier = reviewer('verifier', () => {
+      verifyCalls++
+      return verifyCalls === 1
+        ? verdicts({ id: 'F1', verdict: 'keep', evidence: 'checked' })
+        : verdicts(
+            { id: 'F2', verdict: 'keep', evidence: 'b.go:12 — the loop has no bound' },
+            { id: 'F3', verdict: 'drop', evidence: 'b.go:44 — a defer removes it' },
+          )
+    })
+
+    const orch = new LedgerOrchestrator([a], verifier, gap, { maxRounds: 2 })
+    const result = await orch.run('PR #1', 'title', DIFF)
+
+    expect(result.gapFinderStats).toMatchObject({
+      finderId: 'gapFinder', proposed: 2, added: 2, kept: 1, dropped: 1, inline: 1,
+    })
+    // Its additions are judged in their own verifier call, not folded into the first
+    expect(verifyCalls).toBe(2)
+    // …and they are not counted as a finder's work
+    expect(result.finderStats.map(s => s.finderId)).toEqual(['finderA'])
+  })
+
+  it('counts a gap-finder proposal that duplicates an existing entry as not added', async () => {
+    const dupe = findingJson()
+    const a = reviewer('finderA', p => isFinderPrompt(p) ? findings(dupe) : adjudications())
+    const gap = reviewer('gapFinder', () => findings(dupe))
+    const verifier = reviewer('verifier', () => verdicts({ id: 'F1', verdict: 'keep', evidence: 'checked' }))
+
+    const orch = new LedgerOrchestrator([a], verifier, gap, { maxRounds: 2 })
+    const result = await orch.run('PR #1', 'title', DIFF)
+
+    expect(result.gapFinderStats).toMatchObject({ proposed: 1, added: 0 })
+    expect(result.entries).toHaveLength(1)
+  })
+})
+
 describe('toMergedIssues', () => {
   it('carries the verification verdict through to the publishing path', async () => {
     const a = reviewer('finderA', p => isFinderPrompt(p) ? findings(findingJson()) : adjudications())

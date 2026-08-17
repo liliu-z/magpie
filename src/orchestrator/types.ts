@@ -6,6 +6,8 @@ export interface Reviewer {
   id: string
   provider: AIProvider
   systemPrompt: string
+  /** Ledger flow: this finder's deeper-focus angle; falls back to a built-in default */
+  lens?: string
 }
 
 export interface DebateMessage {

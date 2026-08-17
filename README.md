@@ -105,6 +105,12 @@ defaults:
 reviewers:
   claude:
     model: claude-code
+    # Ledger flow only: where this finder digs deeper than the others. Added to the
+    # review instruction, never substituted for it — every finder still sweeps its
+    # whole scope. Optional; a per-finder default is used when unset.
+    lens: |
+      Go deeper on what breaks at runtime: nil and empty handling, error and
+      cancellation paths, concurrency and lock scope, resource lifetime.
     prompt: |
       You are a senior engineer reviewing this PR. Be precise and evidence-based.
       Review dimensions: Correctness, Security, Compatibility (rolling upgrade,
@@ -299,6 +305,11 @@ Findings are scored on three independent axes — how sure we are it is real, ho
 real, and whether the author can act on it — because collapsing them into one severity number
 is what files small-but-certain bugs as nitpicks. Areas nobody reviewed are reported explicitly
 rather than implied by silence.
+
+Each finder is given its own angle (configurable via `lens:`) so that several finders on one
+model don't retrace one path. The angle says where to dig deeper, never what to skip. Every run
+reports what each finder found alone versus shared, and accounts for the gap finder separately,
+so whether either is earning its cost is answerable from the run itself.
 
 `judge` and `gapFinder` are optional config entries (see [Configuration](#configuration)).
 Without a judge, findings are merged by text similarity, which misses paraphrases of the same

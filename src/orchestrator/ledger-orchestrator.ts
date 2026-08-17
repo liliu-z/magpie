@@ -44,10 +44,21 @@ import {
 import { extractChangedFiles } from './orchestrator.js'
 import { logger } from '../utils/logger.js'
 
-/** Distinct angles so two finders on the same model don't retrace the same path. */
+/**
+ * Where each finder goes deeper, so two finders on one model don't retrace one path.
+ *
+ * These are additive, never a filter — the prompt tells every finder to sweep its whole scope
+ * first. That distinction is the whole safety of the idea: an angle that narrows what gets
+ * read trades a duplicate-coverage problem for a blind-spot problem, and a blind spot is the
+ * failure nothing downstream can recover from.
+ *
+ * Overridable per reviewer via `lens:` in config. A finder past the end of this list reuses an
+ * earlier angle, which is why more same-model finders stop paying for themselves.
+ */
 export const DEFAULT_LENSES = [
   'Focus on what breaks at runtime: nil/empty handling, error paths, concurrency, resource lifetime, and cancellation.',
   'Focus on contracts and interactions: callers of changed interfaces, rolling-upgrade and compatibility risk, shared state across features, and invariants this change relies on.',
+  'Focus on data and state: persisted or serialized formats, migration and backfill paths, state machines and their illegal transitions, and what a partial or retried operation leaves behind.',
 ]
 
 export interface LedgerOrchestratorOptions {
@@ -62,6 +73,30 @@ export interface LedgerOrchestratorOptions {
   interruptState?: { interrupted: boolean }
 }
 
+/** What each finder contributed, so "did the angles buy anything" is answerable from a run. */
+export interface FinderStats {
+  finderId: string
+  raised: number
+  /** Findings only this finder reported — the actual return on giving it its own angle */
+  unique: number
+  /** Findings it shared with at least one other finder */
+  shared: number
+}
+
+/** What the gap finder contributed and what happened to it, reported separately on purpose. */
+export interface GapFinderStats {
+  finderId: string
+  proposed: number
+  /** Survived deduplication against everything already in the ledger */
+  added: number
+  kept: number
+  rewritten: number
+  dropped: number
+  unverified: number
+  inline: number
+  summary: number
+}
+
 export interface LedgerRunResult {
   entries: LedgerEntry[]
   inline: LedgerEntry[]
@@ -71,6 +106,9 @@ export interface LedgerRunResult {
   roundsRun: number
   /** True when the rounds ended because nothing was moving, not because we ran out of them */
   converged: boolean
+  finderStats: FinderStats[]
+  /** Undefined when no gap finder ran */
+  gapFinderStats?: GapFinderStats
   tokenUsage: TokenUsage[]
 }
 
@@ -179,10 +217,16 @@ export class LedgerOrchestrator {
     await this.verify(target, this.ledger.all().filter(e => e.state !== 'retracted').map(e => e.id))
     this.checkInterrupt()
 
+    let gapProposed = 0
+    let gapAdded: string[] = []
     if (this.options.gapFinderEnabled !== false && this.gapFinder) {
-      const added = await this.runGapFinder(target, coverage)
-      // Additions are claims, not conclusions — they go back through verification
-      if (added.length > 0) await this.verify(target, added)
+      const result = await this.runGapFinder(target, coverage)
+      gapProposed = result.proposed
+      gapAdded = result.added
+      // Additions are claims, not conclusions — they go back through verification.
+      // A second verify call, not a continuation of the first: the verifier must judge these
+      // without the context of having just approved the findings they are supposed to complement.
+      if (gapAdded.length > 0) await this.verify(target, gapAdded)
     }
 
     const entries = this.ledger.all()
@@ -194,7 +238,19 @@ export class LedgerOrchestrator {
       else if (channel === 'summary') summary.push(e)
     }
 
+    const finderStats = this.collectFinderStats(entries)
+    const gapFinderStats = this.gapFinder && gapProposed >= 0 && (gapProposed > 0 || gapAdded.length > 0)
+      ? this.collectGapFinderStats(this.gapFinder.id, gapProposed, gapAdded, inline, summary)
+      : undefined
+
     logger.info(`Ledger result: ${entries.length} entries → ${inline.length} inline, ${summary.length} summary; coverage ${coverage.summary()}`)
+    for (const s of finderStats) {
+      logger.info(`[finder-stats] ${s.finderId}: raised ${s.raised} (${s.unique} only-it, ${s.shared} shared)`)
+    }
+    if (gapFinderStats) {
+      const g = gapFinderStats
+      logger.info(`[gap-finder] proposed ${g.proposed}, ${g.added} new after dedup → verifier kept ${g.kept}, rewrote ${g.rewritten}, dropped ${g.dropped}, left ${g.unverified} unverified → ${g.inline} inline, ${g.summary} summary`)
+    }
 
     return {
       entries,
@@ -204,11 +260,51 @@ export class LedgerOrchestrator {
       coverageSummary: coverage.summary(),
       roundsRun,
       converged,
+      finderStats,
+      gapFinderStats,
       tokenUsage: [...this.tokens.entries()].map(([reviewerId, t]) => ({
         reviewerId,
         inputTokens: t.input,
         outputTokens: t.output,
       })),
+    }
+  }
+
+  /**
+   * Per-finder contribution.
+   *
+   * `unique` is the number that matters when deciding whether giving each finder its own angle
+   * paid for itself: two finders that only ever report the same things are one finder billed
+   * twice, and two whose findings never overlap are a hint the angles became filters.
+   */
+  private collectFinderStats(entries: LedgerEntry[]): FinderStats[] {
+    return this.finders.map(f => {
+      const mine = entries.filter(e => e.raisedBy.includes(f.id))
+      const shared = mine.filter(e => e.raisedBy.length > 1).length
+      return { finderId: f.id, raised: mine.length, unique: mine.length - shared, shared }
+    })
+  }
+
+  /** What the gap finder added and what became of it, tracked apart from the finders. */
+  private collectGapFinderStats(
+    finderId: string,
+    proposed: number,
+    added: string[],
+    inline: LedgerEntry[],
+    summary: LedgerEntry[],
+  ): GapFinderStats {
+    const own = added.map(id => this.ledger.get(id)).filter(Boolean) as LedgerEntry[]
+    const count = (v: Verification) => own.filter(e => e.verification === v).length
+    return {
+      finderId,
+      proposed,
+      added: own.length,
+      kept: count('keep'),
+      rewritten: count('rewrite'),
+      dropped: count('drop'),
+      unverified: count('unanswered'),
+      inline: own.filter(e => inline.some(i => i.id === e.id)).length,
+      summary: own.filter(e => summary.some(s => s.id === e.id)).length,
     }
   }
 
@@ -231,7 +327,7 @@ export class LedgerOrchestrator {
             target,
             targetDescription,
             shard,
-            lens: DEFAULT_LENSES[i % DEFAULT_LENSES.length],
+            lens: finder.lens ?? DEFAULT_LENSES[i % DEFAULT_LENSES.length],
             sharedContext: this.options.sharedContext,
             langSuffix: this.langSuffix,
           })
@@ -535,9 +631,16 @@ export class LedgerOrchestrator {
     this.ledger.markUnverified(ids)
   }
 
-  /** The gap-filling half of the old auditor — may add, may not publish. */
-  private async runGapFinder(target: string, coverage: CoverageLedger): Promise<string[]> {
-    if (!this.gapFinder) return []
+  /**
+   * The gap-filling half of the old auditor — may add, may not publish.
+   *
+   * It runs on its own provider instance, so it shares no conversation with the verifier that
+   * will judge its additions: a reviewer that just argued for a finding is not the same
+   * reviewer as one meeting it cold, and keeping those two contexts apart is what makes the
+   * re-verification an actual check rather than a formality.
+   */
+  private async runGapFinder(target: string, coverage: CoverageLedger): Promise<{ proposed: number; added: string[] }> {
+    if (!this.gapFinder) return { proposed: 0, added: [] }
     this.options.onStage?.('gap-finder')
 
     const known = this.ledger.all().filter(e => e.state !== 'retracted')
@@ -552,17 +655,26 @@ export class LedgerOrchestrator {
       const response = await this.ask(this.gapFinder, prompt)
       const parsed = parseFinderOutput(response)
       if (!parsed) {
-        logger.warn('Gap finder output unparseable')
-        return []
+        logger.warn('[gap-finder] output unparseable')
+        return { proposed: 0, added: [] }
       }
       const before = new Set(this.ledger.all().map(e => e.id))
       for (const f of parsed.findings) this.ledger.add(this.gapFinder.id, f, 99)
       const added = this.ledger.all().filter(e => !before.has(e.id)).map(e => e.id)
-      logger.info(`Gap finder: ${parsed.findings.length} reported, ${added.length} new after dedup against the ledger`)
-      return added
+      // Name every addition. Judging whether this role earns its cost means reading what it
+      // actually proposed, not a count — and a count cannot distinguish insight from padding.
+      for (const id of added) {
+        const e = this.ledger.get(id)!
+        logger.info(`[gap-finder] added ${id} ${e.file}${typeof e.line === 'number' ? `:${e.line}` : ''} — ${e.title}`)
+      }
+      const duplicates = parsed.findings.length - added.length
+      if (duplicates > 0) {
+        logger.info(`[gap-finder] ${duplicates} proposal(s) were already in the ledger`)
+      }
+      return { proposed: parsed.findings.length, added }
     } catch (err) {
-      logger.warn('Gap finder failed:', err)
-      return []
+      logger.warn('[gap-finder] failed:', err)
+      return { proposed: 0, added: [] }
     }
   }
 }

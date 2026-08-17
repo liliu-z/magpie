@@ -94,6 +94,25 @@ export async function runLedgerReview(input: LedgerRunInput): Promise<DebateResu
     sections.push(`## Discarded (${dropped})\n\nRejected during verification, withdrawn, or style-only.`)
   }
 
+  // Reported separately so each role can be judged on its own output rather than on the
+  // pipeline's aggregate, which is what makes "is this stage worth its cost" answerable
+  const roles: string[] = [
+    `Finders: ${run.finderStats.map(s => `${s.finderId} raised ${s.raised} (${s.unique} only-it)`).join(' · ')}`,
+  ]
+  if (run.gapFinderStats) {
+    const g = run.gapFinderStats
+    const gapEntries = run.entries.filter(e => e.raisedBy.includes(g.finderId))
+    roles.push(
+      `Gap finder: proposed ${g.proposed}, ${g.added} new after dedup → verifier kept ${g.kept}, rewrote ${g.rewritten}, dropped ${g.dropped}, left ${g.unverified} unverified → ${g.inline} inline, ${g.summary} noted`,
+    )
+    if (gapEntries.length > 0) {
+      roles.push(gapEntries.map(e =>
+        `  - ${e.file}${typeof e.line === 'number' ? `:${e.line}` : ''} — ${e.title} _(${e.verification ?? 'unverified'})_`
+      ).join('\n'))
+    }
+  }
+  sections.push(`## Who found what\n\n${roles.join('\n\n')}`)
+
   return {
     prNumber: input.label,
     analysis: '',

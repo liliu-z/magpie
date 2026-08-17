@@ -380,7 +380,8 @@ export const reviewCommand = new Command('review')
       const reviewers: Reviewer[] = selectedIds.map(id => ({
         id,
         provider: createProvider(config.reviewers[id].model, config),
-        systemPrompt: config.reviewers[id].prompt
+        systemPrompt: config.reviewers[id].prompt,
+        lens: config.reviewers[id].lens
       }))
 
       // Create summarizer

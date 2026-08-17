@@ -72,7 +72,16 @@ The entire change. Work through every changed file systematically.`
   return `Review ${input.target} for defects.
 ${input.targetDescription ? `\nTitle and description:\n${input.targetDescription}\n` : ''}
 ${scope}
-${input.lens ? `\n## Your angle\n\n${input.lens}\n` : ''}${input.sharedContext ? `
+${input.lens ? `
+## Where to go deeper
+
+Sweep your whole scope first — every changed file, every changed function. This angle is
+where you spend the EXTRA effort once that sweep is done. It is not a filter: a serious
+problem outside it is still yours to report, and skipping code because it looks like
+someone else's angle is the one failure this cannot recover from.
+
+${input.lens}
+` : ''}${input.sharedContext ? `
 ## Known call sites and related code
 
 Gathered mechanically to save you the lookup. It is a starting point, NOT a boundary:

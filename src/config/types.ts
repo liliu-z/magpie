@@ -7,6 +7,13 @@ export interface ProviderConfig {
 export interface ReviewerConfig {
   model: string
   prompt: string
+  /**
+   * Ledger flow only: where this finder goes deeper than the others. It is added to the
+   * review instruction, not substituted for it — every finder still sweeps its whole scope.
+   * Two finders on one model with one angle cost double and cover barely more than one;
+   * defaults are supplied per finder when this is unset.
+   */
+  lens?: string
 }
 
 export interface DefaultsConfig {
