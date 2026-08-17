@@ -3,6 +3,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import {
   IssueLedger,
   publishDecision,
+  corroborated,
+  discardReason,
   isSameFinding,
   titleSimilarity,
   type Finding,
@@ -367,5 +369,80 @@ describe('publishDecision', () => {
 
   it('posts a corroborated medium-confidence actionable finding inline', () => {
     expect(publishDecision(entry({ state: 'confirmed', correctnessConfidence: 'medium', actionability: 'high' }))).toBe('inline')
+  })
+
+  // The gap finder's entries can never reach 'confirmed' — no finder adjudicates them — so
+  // reading 'raised' as "uncorroborated" demoted every one of them however well checked.
+  // This cost a real high-impact upgrade-compatibility bug its inline comment twice.
+  it('treats an evidence-backed verifier keep as corroboration', () => {
+    expect(publishDecision(entry({
+      state: 'raised',
+      correctnessConfidence: 'medium',
+      actionability: 'high',
+      verification: 'keep',
+      verifierEvidence: 'read HybridScalarIndex.cpp:440, no fallback for a missing index_type key',
+    }))).toBe('inline')
+  })
+
+  it('does not treat a keep without evidence as corroboration', () => {
+    expect(publishDecision(entry({
+      state: 'raised',
+      correctnessConfidence: 'medium',
+      actionability: 'high',
+      verification: 'keep',
+    }))).toBe('summary')
+  })
+
+  // "We cannot name the fix" is not a reason to whisper about something that breaks upgrades
+  it('posts a corroborated medium-confidence high-impact finding inline even when the fix is unclear', () => {
+    expect(publishDecision(entry({
+      state: 'confirmed',
+      correctnessConfidence: 'medium',
+      impactSeverity: 'high',
+      actionability: 'medium',
+    }))).toBe('inline')
+  })
+
+  it('still holds back a corroborated medium-confidence finding that is neither big nor actionable', () => {
+    expect(publishDecision(entry({
+      state: 'confirmed',
+      correctnessConfidence: 'medium',
+      impactSeverity: 'medium',
+      actionability: 'medium',
+    }))).toBe('summary')
+  })
+})
+
+describe('corroborated', () => {
+  it('counts two finders landing on it independently', () => {
+    expect(corroborated({ state: 'confirmed' })).toBe(true)
+  })
+
+  it('counts a verifier that read the code and kept it with evidence', () => {
+    expect(corroborated({ state: 'raised', verification: 'keep', verifierEvidence: 'checked line 443' })).toBe(true)
+  })
+
+  it('does not count an unverified single-source finding', () => {
+    expect(corroborated({ state: 'raised' })).toBe(false)
+    expect(corroborated({ state: 'raised', verification: 'unanswered' })).toBe(false)
+  })
+})
+
+describe('discardReason', () => {
+  const entry = (over: Partial<LedgerEntry>) => ({
+    state: 'confirmed' as const,
+    correctnessConfidence: 'high' as const,
+    impactSeverity: 'high' as const,
+    actionability: 'high' as const,
+    ...over,
+  })
+
+  // Order matters: an entry can satisfy several of these at once, and the reason shown must
+  // be the branch publishDecision actually took
+  it('reports the first reason publishDecision would have hit', () => {
+    expect(discardReason(entry({ state: 'retracted', verification: 'drop' }))).toMatch(/withdrawn/)
+    expect(discardReason(entry({ verification: 'drop', impactSeverity: 'nitpick' }))).toMatch(/verifier/)
+    expect(discardReason(entry({ impactSeverity: 'nitpick', correctnessConfidence: 'low' }))).toMatch(/style/)
+    expect(discardReason(entry({ correctnessConfidence: 'low', impactSeverity: 'medium' }))).toMatch(/low confidence/)
   })
 })

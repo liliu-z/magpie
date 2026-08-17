@@ -2,7 +2,19 @@
 import chalk from 'chalk'
 import type { Reviewer, DebateResult } from '../../orchestrator/types.js'
 import { LedgerOrchestrator, toMergedIssues } from '../../orchestrator/ledger-orchestrator.js'
-import type { LedgerEntry } from '../../orchestrator/ledger.js'
+import { corroborated, discardReason, type LedgerEntry } from '../../orchestrator/ledger.js'
+
+function location(e: LedgerEntry): string {
+  return `${e.file}${typeof e.line === 'number' ? `:${e.line}` : ''}`
+}
+
+/**
+ * The three scores, spelled out. Every entry that did not make it inline carries these so a
+ * reader can see which score held it back instead of having to trust the one-word reason.
+ */
+function scores(e: LedgerEntry): string {
+  return `confidence: ${e.correctnessConfidence} · impact: ${e.impactSeverity} · actionable: ${e.actionability}`
+}
 
 export interface LedgerRunInput {
   finders: Reviewer[]
@@ -21,23 +33,25 @@ export interface LedgerRunInput {
   interruptState?: { interrupted: boolean }
 }
 
+/** Walks `publishDecision`'s summary branches in the same order, so the stated reason is
+ *  the one that actually held the entry back rather than a plausible-looking guess. */
 function describe(e: LedgerEntry): string {
-  const loc = `${e.file}${typeof e.line === 'number' ? `:${e.line}` : ''}`
+  const loc = location(e)
   const why = e.state === 'disputed' || e.state === 'challenged'
     ? 'reviewers disagree'
     : e.verification === 'unanswered'
       ? 'not fact-checked'
       : e.correctnessConfidence === 'low'
         ? 'low confidence'
-        : e.actionability === 'low'
-          ? 'no clear action'
-          : e.state === 'raised'
-            ? 'single source'
+        : e.correctnessConfidence === 'medium' && !corroborated(e)
+          ? 'single source'
+          : e.actionability === 'low'
+            ? 'no clear action'
             : 'held back'
   // The judge's one-liner is the only place that says WHY a disagreement stayed open, which
   // is what a reader needs to decide whether to look themselves
   const rationale = e.judgeRationale ? `  \n  ${e.judgeRationale}` : ''
-  return `- **${loc}** — ${e.title} _(${why})_${rationale}`
+  return `- **${loc}** — ${e.title} _(${why})_  \n  ${scores(e)} · raised by: ${e.raisedBy.join(', ')}${rationale}`
 }
 
 /**
@@ -89,9 +103,14 @@ export async function runLedgerReview(input: LedgerRunInput): Promise<DebateResu
     sections.push(`## Noted, not posted inline (${run.summary.length})\n\n${run.summary.map(describe).join('\n')}`)
   }
 
-  const dropped = run.entries.length - run.inline.length - run.summary.length
-  if (dropped > 0) {
-    sections.push(`## Discarded (${dropped})\n\nRejected during verification, withdrawn, or style-only.`)
+  // Named, not just counted. A bare count cannot be audited: it hides whether the gate threw
+  // out a false positive or a real bug, which is the only question worth asking about a gate.
+  const published = new Set([...run.inline, ...run.summary].map(e => e.id))
+  const dropped = run.entries.filter(e => !published.has(e.id))
+  if (dropped.length > 0) {
+    sections.push(`## Discarded (${dropped.length})\n\n${dropped.map(e =>
+      `- **${location(e)}** — ${e.title} _(${discardReason(e)})_  \n  ${scores(e)} · raised by: ${e.raisedBy.join(', ')}`
+    ).join('\n')}`)
   }
 
   // Reported separately so each role can be judged on its own output rather than on the

@@ -159,7 +159,10 @@ export const reviewCommand = new Command('review')
           label: reviewingLastCommit ? 'Last Commit' : 'Local Changes',
           prompt: reviewingLastCommit
             ? `Please review the following code changes from the last commit:\n\n\`\`\`diff\n${localDiff}\n\`\`\`\n\nAnalyze these changes and provide your feedback.`
-            : `Please review the following local code changes (uncommitted diff):\n\n\`\`\`diff\n${localDiff}\n\`\`\`\n\nAnalyze these changes and provide your feedback.`
+            : `Please review the following local code changes (uncommitted diff):\n\n\`\`\`diff\n${localDiff}\n\`\`\`\n\nAnalyze these changes and provide your feedback.`,
+          // Also carried separately from `prompt`: the ledger flow plans shards off this and
+          // refuses to run without it, so leaving it unset made `--ledger --local` fail outright
+          diffText: localDiff || undefined
         }
       } else if (options.branch !== undefined) {
         const baseBranch = typeof options.branch === 'string' ? options.branch : 'main'

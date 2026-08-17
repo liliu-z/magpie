@@ -409,6 +409,23 @@ export class IssueLedger {
 export type PublishChannel = 'inline' | 'summary' | 'drop'
 
 /**
+ * Has anyone other than the finder who raised it read the code and agreed?
+ *
+ * Two things count, and the second one used to be missed. `confirmed` means two finders
+ * landed on it independently. But an entry the verifier kept — after being handed the
+ * claim and told to check it against the source, and having to cite evidence of its own to
+ * be counted at all — has also been seen by a second party. That case matters because the
+ * gap finder's entries can never reach `confirmed`: no finder ever adjudicates them, so
+ * they sit at `raised` forever. Reading `raised` as "nobody corroborated this" therefore
+ * demoted every gap-finder finding regardless of how well checked it was, which cost a real
+ * high-impact upgrade-compatibility bug an inline comment on two separate runs.
+ */
+export function corroborated(entry: Pick<LedgerEntry, 'state'> & { verification?: Verification; verifierEvidence?: string }): boolean {
+  if (entry.state === 'confirmed') return true
+  return entry.verification === 'keep' && !!entry.verifierEvidence
+}
+
+/**
  * Decide where a finding goes.
  *
  * The three scores are read separately, which is the entire point of splitting them: a
@@ -420,7 +437,7 @@ export type PublishChannel = 'inline' | 'summary' | 'drop'
  *  - summary = mentioned in the roundup. Worth saying, not worth interrupting for.
  *  - drop    = not reported.
  */
-export function publishDecision(entry: Pick<LedgerEntry, 'state' | 'correctnessConfidence' | 'impactSeverity' | 'actionability'> & { verification?: Verification }): PublishChannel {
+export function publishDecision(entry: Pick<LedgerEntry, 'state' | 'correctnessConfidence' | 'impactSeverity' | 'actionability'> & { verification?: Verification; verifierEvidence?: string }): PublishChannel {
   if (entry.state === 'retracted') return 'drop'
   // The verifier read the code and rejected it
   if (entry.verification === 'drop') return 'drop'
@@ -440,9 +457,11 @@ export function publishDecision(entry: Pick<LedgerEntry, 'state' | 'correctnessC
   }
 
   if (entry.correctnessConfidence === 'medium') {
-    // Single-sourced and only moderately sure — say it, but don't interrupt
-    if (entry.state === 'raised') return 'summary'
-    return entry.actionability === 'high' ? 'inline' : 'summary'
+    // Only moderately sure it is real, so one party's word is not enough to interrupt on
+    if (!corroborated(entry)) return 'summary'
+    // Corroborated: worth interrupting when we can say what to do about it, or when the
+    // consequence is big enough that "we cannot name the fix" is no reason to whisper
+    return entry.actionability === 'high' || bigImpact ? 'inline' : 'summary'
   }
 
   // High confidence
@@ -450,4 +469,20 @@ export function publishDecision(entry: Pick<LedgerEntry, 'state' | 'correctnessC
   // A small but certain and fixable bug is exactly what reviewers value and what the old
   // severity-only gate threw away
   return 'inline'
+}
+
+/**
+ * Why an entry was dropped, in the reader's words.
+ *
+ * Lives next to `publishDecision` and walks the same branches in the same order so the two
+ * cannot drift. A report that says "Discarded (2)" and nothing else is unauditable — you
+ * cannot tell a correctly-rejected false positive from a real bug the gate ate, which is
+ * exactly the question anyone evaluating this flow is trying to answer.
+ */
+export function discardReason(entry: Pick<LedgerEntry, 'state' | 'correctnessConfidence' | 'impactSeverity' | 'actionability'> & { verification?: Verification; verifierEvidence?: string }): string {
+  if (entry.state === 'retracted') return 'withdrawn by the finder who raised it'
+  if (entry.verification === 'drop') return 'verifier checked the code and rejected it'
+  if (entry.impactSeverity === 'nitpick') return 'style only'
+  if (entry.correctnessConfidence === 'low') return 'low confidence and not enough impact to mention anyway'
+  return 'below the reporting bar'
 }
