@@ -149,6 +149,8 @@ export class OpenCodeProvider implements AIProvider {
   // Escape hatch for anyone who wants to inspect a review's session afterwards, at the cost
   // of growing opencode's store without bound — see endSession
   private keepSessions = process.env.MAGPIE_KEEP_OPENCODE_SESSIONS === '1'
+  /** Backoff between stream restarts; overridable so tests need not sleep through it */
+  protected streamBackoffMs = [1000, 3000, 6000]
 
   get sessionId() { return this.opencodeSessionId }
 
@@ -225,17 +227,42 @@ export class OpenCodeProvider implements AIProvider {
     }
   }
 
+  /**
+   * Streaming variant, with the same retry protection as `chat` — but only up to the first
+   * chunk.
+   *
+   * Once output has been handed to the caller it has usually been printed, so a retry would
+   * repeat it; before that point a restart is invisible and safe. This matters more than it
+   * looks: the debate flow streams every reviewer and analyzer call, so without this a single
+   * transient CLI error takes down a whole review, while the ledger flow survives the same
+   * error purely because it happens to use the non-streaming path. That was never a design
+   * decision, just an accident of which method each flow called.
+   */
   async *chatStream(messages: Message[], systemPrompt?: string): AsyncGenerator<string, void, unknown> {
     const resume = this.resumeId()
     const prompt = resume
       ? this.session.buildPromptLastOnly(messages)
       : this.session.buildPrompt(messages, systemPrompt)
-    try {
-      yield* this.spawnOpencode(prompt, resume)
-      this.markSent()
-    } catch (err) {
-      this.resetSession()
-      throw err
+
+    const backoffMs = this.streamBackoffMs
+    for (let attempt = 0; ; attempt++) {
+      let emitted = false
+      try {
+        for await (const chunk of this.spawnOpencode(prompt, resume)) {
+          emitted = true
+          yield chunk
+        }
+        this.markSent()
+        return
+      } catch (err) {
+        const canRetry = !emitted && attempt < backoffMs.length && isOpencodeTransientError(err)
+        if (!canRetry) {
+          this.resetSession()
+          throw err
+        }
+        logger.warn(`opencode stream failed before output (attempt ${attempt + 1}/${backoffMs.length + 1}), retrying: ${err instanceof Error ? err.message : String(err)}`)
+        await new Promise(r => setTimeout(r, backoffMs[attempt]))
+      }
     }
   }
 
@@ -265,7 +292,7 @@ export class OpenCodeProvider implements AIProvider {
     return output.trim()
   }
 
-  private async *spawnOpencode(prompt: string, resumeSessionId?: string, options?: ChatOptions): AsyncGenerator<string, void, unknown> {
+  protected async *spawnOpencode(prompt: string, resumeSessionId?: string, options?: ChatOptions): AsyncGenerator<string, void, unknown> {
     const { prompt: stdinPrompt, cleanup } = preparePromptForCli(prompt)
 
     const args = buildOpencodeArgs({

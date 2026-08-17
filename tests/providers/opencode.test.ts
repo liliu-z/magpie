@@ -1,6 +1,6 @@
 // tests/providers/opencode.test.ts
 import { describe, it, expect, beforeEach } from 'vitest'
-import { buildOpencodeArgs, OpencodeEventParser, isOpencodeTransientError } from '../../src/providers/opencode.js'
+import { buildOpencodeArgs, OpencodeEventParser, isOpencodeTransientError, OpenCodeProvider } from '../../src/providers/opencode.js'
 
 // Helper: build one NDJSON line the way `opencode run --format json` emits them
 function evt(type: string, part: Record<string, unknown>, sessionID = 'ses_abc'): string {
@@ -196,5 +196,58 @@ describe('OpencodeEventParser', () => {
   it('flush is a no-op when the buffer is empty', () => {
     parser.push(evt('text', { id: 'prt_1', type: 'text', text: 'done' }))
     expect(parser.flush()).toEqual([])
+  })
+})
+
+describe('chatStream retry', () => {
+  // The debate flow streams every reviewer call, so an un-retried transient error there takes
+  // down a whole review. The ledger flow survived the same errors only because it happens to
+  // use the non-streaming path — an accident, not a design.
+  class FlakyStream extends OpenCodeProvider {
+    attempts = 0
+    constructor(private failures: number, private failWith: string, private emitBeforeFail = false) {
+      super()
+      this.streamBackoffMs = [1, 1, 1]     // keep the retry schedule, drop the waiting
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    protected async *spawnOpencode(): any {
+      this.attempts++
+      if (this.attempts <= this.failures) {
+        if (this.emitBeforeFail) yield 'partial output'
+        throw new Error(this.failWith)
+      }
+      yield 'ok'
+    }
+  }
+
+  const drain = async (p: OpenCodeProvider) => {
+    const out: string[] = []
+    for await (const c of p.chatStream([{ role: 'user', content: 'hi' }])) out.push(c)
+    return out.join('')
+  }
+
+  it('retries a transient failure that happened before any output', async () => {
+    const p = new FlakyStream(2, 'Error: Unexpected error\n\ndatabase is locked')
+    expect(await drain(p)).toBe('ok')
+    expect(p.attempts).toBe(3)
+  })
+
+  it('does not retry once output has been handed to the caller', async () => {
+    // Retrying here would print the partial output twice
+    const p = new FlakyStream(1, 'database is locked', true)
+    await expect(drain(p)).rejects.toThrow('database is locked')
+    expect(p.attempts).toBe(1)
+  })
+
+  it('does not retry a non-transient failure', async () => {
+    const p = new FlakyStream(1, 'model not found: bogus/model')
+    await expect(drain(p)).rejects.toThrow('model not found')
+    expect(p.attempts).toBe(1)
+  })
+
+  it('gives up after the backoff schedule is exhausted', async () => {
+    const p = new FlakyStream(99, 'database is locked')
+    await expect(drain(p)).rejects.toThrow('database is locked')
+    expect(p.attempts).toBe(4)
   })
 })
