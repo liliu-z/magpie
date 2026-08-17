@@ -7,6 +7,7 @@ import { ClaudeCodeProvider } from './claude-code.js'
 import { CodexCliProvider } from './codex-cli.js'
 import { GeminiCliProvider } from './gemini-cli.js'
 import { AntigravityCliProvider } from './antigravity.js'
+import { OpenCodeProvider } from './opencode.js'
 import { GeminiProvider } from './gemini.js'
 import { QwenCodeProvider } from './qwen-code.js'
 import { MiniMaxProvider } from './minimax.js'
@@ -15,7 +16,7 @@ import { checkCliBinary } from './cli-check.js'
 
 // Parse CLI model string: 'gemini-cli:gemini-2.5-pro' → { provider: 'gemini-cli', cliModel: 'gemini-2.5-pro' }
 // Plain 'gemini-cli' → { provider: 'gemini-cli', cliModel: undefined }
-const CLI_PROVIDERS = ['claude-code', 'codex-cli', 'gemini-cli', 'antigravity', 'qwen-code'] as const
+const CLI_PROVIDERS = ['claude-code', 'codex-cli', 'gemini-cli', 'antigravity', 'qwen-code', 'opencode'] as const
 type CliProviderName = typeof CLI_PROVIDERS[number]
 
 export function parseCliModel(model: string): { provider: string; cliModel?: string } {
@@ -36,7 +37,7 @@ export function isCliModel(model: string): boolean {
   return (CLI_PROVIDERS as readonly string[]).includes(provider)
 }
 
-export function getProviderForModel(model: string): 'anthropic' | 'openai' | 'google' | 'claude-code' | 'codex-cli' | 'gemini-cli' | 'antigravity' | 'qwen-code' | 'minimax' | 'mock' {
+export function getProviderForModel(model: string): 'anthropic' | 'openai' | 'google' | 'claude-code' | 'codex-cli' | 'gemini-cli' | 'antigravity' | 'qwen-code' | 'opencode' | 'minimax' | 'mock' {
   const { provider } = parseCliModel(model)
   if ((CLI_PROVIDERS as readonly string[]).includes(provider)) {
     return provider as CliProviderName
@@ -91,6 +92,12 @@ export function createProvider(model: string, config: MagpieConfig): AIProvider 
   if (providerName === 'antigravity') {
     checkCliBinary('agy', 'Antigravity')
     return new AntigravityCliProvider({ cliModel })
+  }
+
+  // opencode doesn't need API key config (uses its own configured provider credentials)
+  if (providerName === 'opencode') {
+    checkCliBinary('opencode', 'OpenCode')
+    return new OpenCodeProvider({ cliModel })
   }
 
   // Qwen Code CLI doesn't need API key config (uses OAuth)

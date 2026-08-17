@@ -1,7 +1,12 @@
 // tests/providers/factory.test.ts
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createProvider, getProviderForModel } from '../../src/providers/factory.js'
+import { checkCliBinary } from '../../src/providers/cli-check.js'
 import type { MagpieConfig } from '../../src/config/types.js'
+
+// CLI providers verify their binary exists; stub it so these tests don't depend on
+// which CLIs happen to be installed on the machine running them.
+vi.mock('../../src/providers/cli-check.js', () => ({ checkCliBinary: vi.fn() }))
 
 describe('Provider Factory', () => {
   const mockConfig: MagpieConfig = {
@@ -16,6 +21,10 @@ describe('Provider Factory', () => {
     summarizer: { model: 'claude-sonnet-4-20250514', prompt: '' },
     analyzer: { model: 'claude-sonnet-4-20250514', prompt: '' }
   }
+
+  beforeEach(() => {
+    vi.mocked(checkCliBinary).mockClear()
+  })
 
   describe('getProviderForModel', () => {
     it('should return anthropic for claude models', () => {
@@ -42,6 +51,11 @@ describe('Provider Factory', () => {
 
     it('should return antigravity for antigravity model', () => {
       expect(getProviderForModel('antigravity')).toBe('antigravity')
+    })
+
+    it('should return opencode for opencode model', () => {
+      expect(getProviderForModel('opencode')).toBe('opencode')
+      expect(getProviderForModel('opencode:anthropic/claude-sonnet-4-5')).toBe('opencode')
     })
   })
 
@@ -83,6 +97,12 @@ describe('Provider Factory', () => {
     it('should create antigravity provider', () => {
       const provider = createProvider('antigravity', mockConfig)
       expect(provider.name).toBe('antigravity')
+    })
+
+    it('should create opencode provider', () => {
+      const provider = createProvider('opencode', mockConfig)
+      expect(provider.name).toBe('opencode')
+      expect(checkCliBinary).toHaveBeenCalledWith('opencode', 'OpenCode')
     })
 
     it('should pass base_url through to API providers', () => {

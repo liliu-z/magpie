@@ -19,13 +19,16 @@ Multi-AI adversarial code review tool. Multiple AI models independently review y
 | `codex-cli` | CLI | OpenAI Codex CLI (uses your subscription, no API key) |
 | `gemini-cli` | CLI | Gemini CLI (uses Google account login, no API key) |
 | `qwen-code` | CLI | Alibaba Qwen Code CLI (uses OAuth login, no API key) |
+| `opencode` | CLI | opencode CLI (uses your opencode provider setup, no API key) |
 | `claude-*` | API | Anthropic API (requires ANTHROPIC_API_KEY) |
 | `gpt-*` | API | OpenAI API (requires OPENAI_API_KEY) |
 | `gemini-*` | API | Google Gemini API (requires GOOGLE_API_KEY) |
 | `minimax` | API | MiniMax API (requires MINIMAX_API_KEY) |
 | `mock` | Debug | Mock provider for testing (no API key, see [Debug Mode](#debug-mode)) |
 
-**Recommended**: Use CLI providers (claude-code, codex-cli, gemini-cli, qwen-code) - they're free with your subscriptions and don't require API keys.
+**Recommended**: Use CLI providers (claude-code, codex-cli, gemini-cli, qwen-code, opencode) - they're free with your subscriptions and don't require API keys.
+
+Pick a specific model for a CLI provider with `provider:model`, e.g. `opencode:anthropic/claude-sonnet-4-5` or `gemini-cli:gemini-2.5-pro`.
 
 ### Custom API Endpoints
 
@@ -398,6 +401,7 @@ Reviewers that support sessions maintain context across debate rounds, reducing 
 | `claude-code` | Yes | Full session with explicit ID |
 | `codex-cli` | Yes | Full session with explicit ID |
 | `qwen-code` | Yes | Full session with explicit ID |
+| `opencode` | Yes | Session ID is issued by opencode and captured from its event stream |
 | `minimax` | Yes | Conversation history maintained |
 | `gemini-cli` | No | Uses full context each round |
 | Other API providers | No | Uses full context each round |
