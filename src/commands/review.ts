@@ -118,6 +118,23 @@ export const reviewCommand = new Command('review')
 
       spinner.start('Preparing review...')
 
+      // Are all reviewers (+ the analyzer and summarizer) CLI-based? CLI providers have
+      // tools and can read the repository; API providers only ever see the prompt.
+      // Hoisted above target selection because every target type needs the answer — local
+      // reviews used to hand CLI reviewers a bare diff with no hint that the code was
+      // there to read, which quietly turned them into diff-only reviewers.
+      const allCli = [
+        ...Object.values(config.reviewers).map(r => r.model),
+        config.analyzer.model,
+        config.summarizer.model,
+      ].every(m => isCliModel(m))
+
+      // Anything that can only be seen by leaving the diff — what a value meant before this
+      // change, what an older binary writes, who else calls this — is invisible without it.
+      const repoAccessNote = allCli
+        ? '\n\nYou have full access to the repository. Use Read/Grep/Glob to examine the source files around these changes, and `git log`/`git show` for how the code got this way. Review every changed file and function systematically.'
+        : ''
+
       // Get local diff if --local flag is used
       let localDiff: string | null = null
       let reviewingLastCommit = false
@@ -150,6 +167,16 @@ export const reviewCommand = new Command('review')
         }
       }
 
+      // The exact command that shows the change, for whichever target this run has. Roles
+      // downstream embed this verbatim, so a wrong one is worse than none: a reviewer sent
+      // to `gh pr diff` on a local review comes back empty-handed and reviews the fragment
+      // of diff that reached its prompt.
+      const changeAccess = pr
+        ? 'Run `gh pr diff` for the diff'
+        : options.local
+          ? (reviewingLastCommit ? 'Run `git show HEAD` for the diff' : 'Run `git diff HEAD` for the diff')
+          : 'Get the diff'
+
       // Determine review target
       let target: ReviewTarget
 
@@ -157,9 +184,9 @@ export const reviewCommand = new Command('review')
         target = {
           type: 'local',
           label: reviewingLastCommit ? 'Last Commit' : 'Local Changes',
-          prompt: reviewingLastCommit
+          prompt: (reviewingLastCommit
             ? `Please review the following code changes from the last commit:\n\n\`\`\`diff\n${localDiff}\n\`\`\`\n\nAnalyze these changes and provide your feedback.`
-            : `Please review the following local code changes (uncommitted diff):\n\n\`\`\`diff\n${localDiff}\n\`\`\`\n\nAnalyze these changes and provide your feedback.`,
+            : `Please review the following local code changes (uncommitted diff):\n\n\`\`\`diff\n${localDiff}\n\`\`\`\n\nAnalyze these changes and provide your feedback.`) + repoAccessNote,
           // Also carried separately from `prompt`: the ledger flow plans shards off this and
           // refuses to run without it, so leaving it unset made `--ledger --local` fail outright
           diffText: localDiff || undefined
@@ -243,16 +270,6 @@ export const reviewCommand = new Command('review')
         } catch {
           // Non-fatal: reviewers can still work without metadata
         }
-
-        // Check if all reviewers (+ analyzer) are CLI-based.
-        // CLI providers can fetch diff and read code themselves via tools.
-        // API providers need the diff pre-fetched and embedded in the prompt.
-        const allModels = [
-          ...Object.values(config.reviewers).map(r => r.model),
-          config.analyzer.model,
-          config.summarizer.model,
-        ]
-        const allCli = allModels.every(m => isCliModel(m))
 
         let prPrompt: string
         let constraintDiff = ''
@@ -739,12 +756,16 @@ export const reviewCommand = new Command('review')
             : undefined,
           label: target.label,
           target: target.prompt.match(/https:\/\/github\.com\/\S+?\/pull\/\d+/)?.[0] || target.label,
-          targetDescription: target.prompt.slice(0, 4000),
+          // Title and description only. This used to be the first 4000 characters of the
+          // prompt, which on a local review is a diff cut off mid-hunk — finders then took
+          // that fragment for the whole change.
+          targetDescription: (target.diffText ? target.prompt.split('```diff')[0] : target.prompt).slice(0, 4000),
           diffText: target.diffText,
           maxRounds,
           maxFilesPerShard: options.shardSize ? parseInt(options.shardSize, 10) : undefined,
           language: config.defaults.language,
           sharedContext,
+          changeAccess,
           interruptState,
         })
       } else {

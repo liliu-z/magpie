@@ -280,6 +280,27 @@ export class DebateOrchestrator {
   }
 
   /** Build a language instruction suffix (empty string if no language configured) */
+  /**
+   * Is the change under review a GitHub PR, or something already in the working tree?
+   *
+   * Sniffed from the task prompt rather than plumbed through the constructor, the same way
+   * house rules are. It matters because these prompts used to hard-code `gh pr diff`: on a
+   * local review that command has no URL to work with, so a reviewer either burns a turn on
+   * it or — the damaging case — concludes the embedded diff is all there is and never opens
+   * a source file. Findings about what a value meant before the change, or what an older
+   * binary writes, are invisible from a diff alone.
+   */
+  private get isPrTarget(): boolean {
+    return /github\.com\/[^/\s]+\/[^/\s]+\/pull\//.test(this.taskPrompt)
+  }
+
+  /** How a reviewer gets at the change and the code around it, for the target in hand. */
+  private get changeAccess(): string {
+    return this.isPrTarget
+      ? 'Use `gh pr diff` and Read/Grep to verify your claims before reporting.'
+      : 'The diff is above. Use Read/Grep/Glob on the source files it touches, and `git log`/`git show` on their history, to verify your claims before reporting.'
+  }
+
   private get langSuffix(): string {
     if (!this.options.language) return ''
     return `\n\nIMPORTANT: You MUST respond in ${this.options.language}. All your analysis, comments, and explanations must be written in ${this.options.language}.`
@@ -865,7 +886,7 @@ DO NOT REPORT:
 If a file has nothing meaningful wrong, skip it. Do NOT produce filler.
 Brevity is a feature — 5 well-evidenced issues > 20 weak ones.
 
-Use \`gh pr diff\` and Read/Grep to verify your claims before reporting.${this.langSuffix}`
+${this.changeAccess}${this.langSuffix}`
 
       return [{ role: 'user', content: prompt }]
     }
@@ -1201,7 +1222,7 @@ Then provide your **Verified Final Conclusion** that:
 
     const prompt = `${this.taskPrompt}
 
-You have access to Read, Grep, Glob, and Bash. Run \`gh pr diff\` (the URL is in the task above) to see the actual changes, then Read the touched files. **Read the code before judging — never guess.**
+You have access to Read, Grep, Glob, and Bash. ${this.isPrTarget ? 'Run `gh pr diff` (the URL is in the task above) to see the actual changes' : 'The diff is in the task above'}, then Read the touched files. **Read the code before judging — never guess.**
 
 ## Issues raised by reviewers
 
@@ -1258,7 +1279,7 @@ New issues use \`verdict: "new"\`. Same evidence rules apply.
 ## Hard rules
 
 - For verdict=keep/rewrite/drop: \`originalIndex\` is REQUIRED (references the issue number above).
-- For verdict=keep/rewrite/new: \`file\` + \`line\` + \`severity\` + \`category\` + \`body\` + \`evidence\` are REQUIRED. \`line\` MUST be inside a diff hunk — run \`gh pr diff\` and verify.
+- For verdict=keep/rewrite/new: \`file\` + \`line\` + \`severity\` + \`category\` + \`body\` + \`evidence\` are REQUIRED. \`line\` MUST be inside a diff hunk — check it against the diff.
 - For verdict=drop: \`reason\` is REQUIRED. Other fields ignored.
 - For verdict=keep: \`body\` may be omitted (signals "original description is fine"). If you set it, that replaces the original.
 - \`body\` must be plain prose. NO emoji decorations, NO \`[meta]\` tags, NO "Severity: X" labels, NO "raised by Y" suffix. Write like a senior engineer leaves an inline comment.

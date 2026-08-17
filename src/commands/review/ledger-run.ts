@@ -30,6 +30,8 @@ export interface LedgerRunInput {
   language?: string
   /** Facts shared with every finder; see `buildFinderPrompt` for why it must stay factual */
   sharedContext?: string
+  /** How finders reach the diff; see `FinderPromptInput.changeAccess` */
+  changeAccess?: string
   interruptState?: { interrupted: boolean }
 }
 
@@ -72,6 +74,7 @@ export async function runLedgerReview(input: LedgerRunInput): Promise<DebateResu
       language: input.language,
       gapFinderEnabled: !!input.gapFinder,
       sharedContext: input.sharedContext,
+      changeAccess: input.changeAccess,
       interruptState: input.interruptState,
       onStage: (stage, detail) => {
         console.log(chalk.dim(`  [ledger] ${stage}${detail ? `: ${detail}` : ''}`))

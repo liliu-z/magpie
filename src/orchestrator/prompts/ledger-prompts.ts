@@ -48,6 +48,13 @@ export interface FinderPromptInput {
    * would give every finder the same framing and turn agreement back into an echo.
    */
   sharedContext?: string
+  /**
+   * How this finder gets at the diff, phrased for the target actually under review.
+   * Without it the instruction was a bare "get the diff", which is unactionable on a local
+   * review — and a finder that cannot reach the diff falls back to whatever fragment of it
+   * reached the prompt and never opens a source file.
+   */
+  changeAccess?: string
   langSuffix?: string
 }
 
@@ -96,8 +103,8 @@ ${input.sharedContext}
 ` : ''}
 ## How to work
 
-Get the diff, then read the actual source around every change. Check callers of anything
-whose contract moved. Report what you can demonstrate.
+${input.changeAccess || 'Get the diff'}, then read the actual source around every change. Check
+callers of anything whose contract moved. Report what you can demonstrate.
 
 ${SELF_CHECK}
 

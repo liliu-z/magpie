@@ -92,6 +92,8 @@ export interface LedgerOrchestratorOptions {
   gapFinderEnabled?: boolean
   /** Facts gathered once and given to every finder. Facts only — see `buildFinderPrompt`. */
   sharedContext?: string
+  /** How finders reach the diff; see `FinderPromptInput.changeAccess`. */
+  changeAccess?: string
   /**
    * Cap on simultaneous round-1 jobs. Round 1 is finders × shards, so it is the one stage
    * whose width grows with the size of the change: a 29-file PR fanned out to 12 concurrent
@@ -360,6 +362,7 @@ export class LedgerOrchestrator {
             shard,
             lens: finder.lens,
             sharedContext: this.options.sharedContext,
+            changeAccess: this.options.changeAccess,
             langSuffix: this.langSuffix,
           })
           try {
